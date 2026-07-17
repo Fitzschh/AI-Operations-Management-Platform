@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from touchorders_core.datastore.orm import AuditLogRow
@@ -13,6 +14,19 @@ from touchorders_core.domain.common import utc_now
 
 def canonical_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _canonical_dt(value: datetime) -> str:
+    """Timezone-stable timestamp string for hashing.
+
+    SQLite's ``DateTime(timezone=True)`` round-trips as a naive UTC datetime, so the raw
+    ``isoformat()`` differs before and after persistence. Normalizing to UTC (treating a naive
+    value as already-UTC) makes the hash chain survive a database round-trip.
+    """
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 class AuditLogger:
@@ -25,7 +39,7 @@ class AuditLogger:
         payload_hash = hashlib.sha256(canonical_json(payload).encode()).hexdigest()
         next_seq = (previous.seq + 1) if previous else 1
         previous_hash = previous.record_hash if previous else None
-        material = f"{previous_hash or ''}|{payload_hash}|{next_seq}|{at.isoformat()}".encode()
+        material = f"{previous_hash or ''}|{payload_hash}|{next_seq}|{_canonical_dt(at)}".encode()
         record_hash = hashlib.sha256(material).hexdigest()
         self._repository.append(AuditLogRow(at=at, actor=actor, action=action, entity_type=entity_type, entity_id=entity_id, correlation_id=correlation_id, payload=payload, payload_hash=payload_hash, prev_hash=previous_hash, record_hash=record_hash))
         return record_hash
@@ -36,7 +50,7 @@ class AuditLogger:
             if record.prev_hash != previous_hash:
                 return False
             payload_hash = hashlib.sha256(canonical_json(record.payload).encode()).hexdigest()
-            expected = hashlib.sha256(f"{previous_hash or ''}|{payload_hash}|{record.seq}|{record.at.isoformat()}".encode()).hexdigest()
+            expected = hashlib.sha256(f"{previous_hash or ''}|{payload_hash}|{record.seq}|{_canonical_dt(record.at)}".encode()).hexdigest()
             if record.payload_hash != payload_hash or record.record_hash != expected:
                 return False
             previous_hash = record.record_hash

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeVar
 
-from touchorders_core.domain.enums import ApprovalState, PlanState, WorkflowState
+from touchorders_core.domain.enums import ApprovalState, IncidentState, PlanState, WorkflowState
 
 
 S = TypeVar("S")
@@ -53,8 +53,25 @@ WORKFLOW_TRANSITIONS = TransitionTable({
     (WorkflowState.EXECUTING, "complete"): WorkflowState.COMPLETED,
     (WorkflowState.EXECUTING, "fail"): WorkflowState.FAILED,
     (WorkflowState.EXECUTING, "compensate"): WorkflowState.COMPENSATING,
-    (WorkflowState.COMPENSATING, "complete"): WorkflowState.FAILED,
+    (WorkflowState.FAILED, "compensate"): WorkflowState.COMPENSATING,
+    (WorkflowState.COMPENSATING, "complete"): WorkflowState.COMPENSATED,
     (WorkflowState.COMPENSATING, "manual_cleanup"): WorkflowState.REQUIRES_MANUAL_CLEANUP,
+})
+
+# §11.2 Incident lifecycle. The manager drives OPEN -> PLANNING -> PLANNED; the rules engine's
+# hysteresis clear_when can self-heal OPEN/PLANNED -> RESOLVED without any human or LLM action.
+INCIDENT_TRANSITIONS = TransitionTable({
+    (IncidentState.OPEN, "triage"): IncidentState.PLANNING,
+    (IncidentState.OPEN, "self_heal"): IncidentState.RESOLVED,
+    (IncidentState.OPEN, "escalate"): IncidentState.MANUAL_HANDLING_REQUIRED,
+    (IncidentState.PLANNING, "plan_submitted"): IncidentState.PLANNED,
+    (IncidentState.PLANNING, "defer"): IncidentState.DEFERRED,
+    (IncidentState.PLANNING, "escalate"): IncidentState.MANUAL_HANDLING_REQUIRED,
+    (IncidentState.PLANNED, "resolved"): IncidentState.RESOLVED,
+    (IncidentState.PLANNED, "reopen"): IncidentState.OPEN,
+    (IncidentState.PLANNED, "self_heal"): IncidentState.RESOLVED,
+    (IncidentState.DEFERRED, "triage"): IncidentState.PLANNING,
+    (IncidentState.MANUAL_HANDLING_REQUIRED, "resolved"): IncidentState.RESOLVED,
 })
 
 

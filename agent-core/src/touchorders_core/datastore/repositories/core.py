@@ -115,6 +115,26 @@ class DomainRepository(Repository):
             session.commit()
             return self._menu(row)
 
+    def get_menu_item(self, item_id: str, tenant_id: str = "default") -> MenuItem | None:
+        with self._session() as session:
+            row = session.get(MenuItemRow, item_id)
+            return self._menu(row) if row and row.tenant_id == tenant_id else None
+
+    def set_menu_availability(self, item_id: str, available: bool, tenant_id: str = "default") -> bool | None:
+        """Flip availability; return the PRIOR value so a compensation can restore it exactly."""
+        with self._session() as session:
+            row = session.get(MenuItemRow, item_id)
+            if row is None or row.tenant_id != tenant_id:
+                return None
+            previous, row.available = row.available, available
+            session.commit()
+            return previous
+
+    def list_menu(self, tenant_id: str = "default") -> list[MenuItem]:
+        with self._session() as session:
+            rows = session.scalars(select(MenuItemRow).where(MenuItemRow.tenant_id == tenant_id)).all()
+            return [self._menu(row) for row in rows]
+
     def sales_between(self, start: datetime, end: datetime, tenant_id: str = "default") -> list[Sale]:
         with self._session() as session:
             rows = session.scalars(select(SaleRow).where(SaleRow.tenant_id == tenant_id, SaleRow.occurred_at >= start, SaleRow.occurred_at < end)).all()
@@ -244,6 +264,11 @@ class IncidentRepository(Repository):
             rows = session.scalars(select(IncidentRow).where(IncidentRow.tenant_id == tenant_id, IncidentRow.state != "RESOLVED").order_by(desc(IncidentRow.created_at))).all()
             return [IncidentReport.model_validate(row.payload) for row in rows]
 
+    def get(self, incident_id: str) -> IncidentReport | None:
+        with self._session() as session:
+            row = session.get(IncidentRow, incident_id)
+            return IncidentReport.model_validate(row.payload) if row else None
+
 
 class ReportRepository(Repository):
     def save(self, report: BusinessReport, tenant_id: str = "default") -> BusinessReport:
@@ -282,7 +307,18 @@ class ApprovalRepository(Repository):
             row = session.scalar(select(ApprovalRequestRow).where(ApprovalRequestRow.plan_id == plan_id))
             if row is None:
                 return None
-            return ApprovalRequest(approval_id=row.approval_id, plan_id=row.plan_id, state=row.state, expires_at=row.expires_at, decided_by=row.decided_by, decided_at=row.decided_at, decision=row.decision, note=row.note)
+            return self._request(row)
+
+    def due(self, now: datetime):
+        """PENDING/ESCALATED requests whose TTL has elapsed (drives approval_expiry_check)."""
+        with self._session() as session:
+            rows = session.scalars(select(ApprovalRequestRow).where(ApprovalRequestRow.state.in_(["PENDING", "ESCALATED"]), ApprovalRequestRow.expires_at <= now)).all()
+            return [self._request(row) for row in rows]
+
+    @staticmethod
+    def _request(row: ApprovalRequestRow):
+        from touchorders_core.domain.approvals import ApprovalRequest
+        return ApprovalRequest(approval_id=row.approval_id, plan_id=row.plan_id, state=row.state, expires_at=row.expires_at, decided_by=row.decided_by, decided_at=row.decided_at, decision=row.decision, note=row.note)
 
 
 class WorkflowRepository(Repository):
