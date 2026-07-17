@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "touchorders-agent-core"
+version = "0.1.0"
+description = "Deterministic, auditable agent core for TouchOrders restaurant operations."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "alembic>=1.13,<2",
+  "APScheduler>=3.10,<4",
+  "fastapi>=0.115,<1",
+  "openai>=1.0,<3",
+  "pydantic>=2.8,<3",
+  "pydantic-settings>=2.4,<3",
+  "PyYAML>=6.0,<7",
+  "SQLAlchemy>=2.0,<3",
+  "structlog>=24.4,<26",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1",
+  "import-linter>=2.0,<3",
+  "pytest>=8.0,<9",
+]
+
+[project.scripts]
+touchorders-agent-core = "touchorders_core.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["touchorders_core"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Domain stays pure"
+type = "forbidden"
+source_modules = ["touchorders_core.domain"]
+forbidden_modules = [
+  "touchorders_core.datastore",
+  "touchorders_core.ingestion",
+  "touchorders_core.analytics",
+  "touchorders_core.rules_engine",
+  "touchorders_core.agents",
+  "touchorders_core.llm",
+  "touchorders_core.tools",
+  "touchorders_core.workflows",
+  "touchorders_core.approvals",
+  "touchorders_core.memory",
+  "touchorders_core.api",
+  "touchorders_core.scheduler",
+  "touchorders_core.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "Datastore does not depend on orchestration"
+type = "forbidden"
+source_modules = ["touchorders_core.datastore"]
+forbidden_modules = [
+  "touchorders_core.agents",
+  "touchorders_core.llm",
+  "touchorders_core.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "Analytics and rules cannot reach the AI layer"
+type = "forbidden"
+source_modules = ["touchorders_core.analytics", "touchorders_core.rules_engine"]
+forbidden_modules = ["touchorders_core.agents", "touchorders_core.llm"]
+
+[[tool.importlinter.contracts]]
+name = "Agents cannot call OpenAI or execution services directly"
+type = "forbidden"
+source_modules = ["touchorders_core.agents"]
+forbidden_modules = ["openai", "touchorders_core.workflows", "touchorders_core.approvals"]
+
+[[tool.importlinter.contracts]]
+name = "LLM subsystem is isolated from agents tools and API"
+type = "forbidden"
+source_modules = ["touchorders_core.llm"]
+forbidden_modules = ["touchorders_core.agents", "touchorders_core.tools", "touchorders_core.api"]
+
+[[tool.importlinter.contracts]]
+name = "Tools cannot depend on LLMs or agents"
+type = "forbidden"
+source_modules = ["touchorders_core.tools"]
+forbidden_modules = ["touchorders_core.llm", "touchorders_core.agents"]
+
+[[tool.importlinter.contracts]]
+name = "Workflows and approvals cannot depend on LLMs or agents"
+type = "forbidden"
+source_modules = ["touchorders_core.workflows", "touchorders_core.approvals"]
+forbidden_modules = ["touchorders_core.llm", "touchorders_core.agents"]
+
+[[tool.importlinter.contracts]]
+name = "API cannot bypass the LLM gateway or tool executor"
+type = "forbidden"
+source_modules = ["touchorders_core.api"]
+forbidden_modules = ["openai", "touchorders_core.tools.executor"]

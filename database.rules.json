@@ -1,0 +1,14 @@
+{
+    "rules": {
+        "branch2": {
+            ".read": "auth.uid == 'fTm3lbcSaogomg20a6JVqzWNRNp1' || auth.uid == 'Hj4cNz6inqNLkdSlLsZv6K5ScPb2' || auth.uid == 'WDLFvdpZIQdQf7HtS3eKLdWjmbj2' || auth.uid == '8UEfGxJCVWUPz7GszgObi3jqwV52' || auth.uid == 'cKFay55p8thPA14HCi5j1edbkhi2' || auth.uid == 'FfHG48IpSuZQKoGZMfFlDqN80d83' || auth.uid == 'jTtn0IIUlQOoNiRcpFGRotCzhob2' || auth.uid == '7lfxB2LJh1PaEBFFFtBJRtsYCq83' || auth.uid == 'm9SFivXItGRm2m4ifZS0LYgkqrk1' || auth.uid == 'GFTV8MemD5NLMh3sSekzL3ctvUp1' || auth.token.email == 'doralyncascato3@gmail.com'",
+            ".write": "auth.uid == 'fTm3lbcSaogomg20a6JVqzWNRNp1' || auth.uid == 'Hj4cNz6inqNLkdSlLsZv6K5ScPb2' || auth.uid == 'WDLFvdpZIQdQf7HtS3eKLdWjmbj2' || auth.uid == '8UEfGxJCVWUPz7GszgObi3jqwV52' || auth.uid == 'cKFay55p8thPA14HCi5j1edbkhi2' || auth.uid == 'FfHG48IpSuZQKoGZMfFlDqN80d83' || auth.uid == 'jTtn0IIUlQOoNiRcpFGRotCzhob2' || auth.uid == '7lfxB2LJh1PaEBFFFtBJRtsYCq83' || auth.uid == 'm9SFivXItGRm2m4ifZS0LYgkqrk1' || auth.uid == 'GFTV8MemD5NLMh3sSekzL3ctvUp1' || auth.token.email == 'doralyncascato3@gmail.com'"
+        },
+        "users": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+        },
+        ".read": "auth.token.email == 'fitzhofer@gmail.com'",
+        ".write": "auth.token.email == 'fitzhofer@gmail.com'"
+    }
+}

@@ -1,0 +1,274 @@
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Eye, EyeOff, X } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { getUserBranch, isUserAdmin } from '../config/authConfig';
+import '../styles/login.css';
+
+/**
+ * Login — layout carried over from the reference project (café photo,
+ * centered espresso card, gold branding, policy footer), with modernized
+ * typography, focus states, shadows and motion.
+ */
+
+const FOOTER_CONTENT = {
+  help: {
+    title: 'Need Help',
+    sections: [
+      { heading: 'Contact', body: 'For access or account support, contact your restaurant administrator or system support team. Include your branch name, registered email, and a short description of the issue.' },
+      { heading: 'Basic Troubleshooting', body: 'Check your internet connection, confirm that your email address is entered correctly, and refresh the page if the login form does not respond.' },
+      { heading: 'Login Assistance', body: 'Use Forgot Password to request a reset link. For branch access changes, ask the administrator to verify that your email is assigned to the correct branch.' },
+    ],
+  },
+  privacy: {
+    title: 'Privacy Policy',
+    sections: [
+      { heading: 'User Data', body: 'The portal uses account information such as email addresses and display names to authenticate users and route them to authorized branch tools.' },
+      { heading: 'Restaurant Data', body: 'Menu items, order logs, inventory records, analytics, and branch settings are stored for operational reporting and restaurant management.' },
+      { heading: 'Analytics and Storage', body: 'Analytics are calculated from real order activity. Firebase services store authentication, database, and configuration data needed to operate the platform.' },
+    ],
+  },
+  cookies: {
+    title: 'Cookie Notice',
+    sections: [
+      { heading: 'Session Usage', body: 'The portal uses browser storage to keep users signed in securely during active sessions.' },
+      { heading: 'Authentication Persistence', body: 'When sign-in persistence is enabled, authentication state may remain available on the same device until the user signs out.' },
+      { heading: 'Preferences', body: 'Local preferences such as theme choice and AI Analyst cache may be saved in the browser to improve day-to-day usability.' },
+    ],
+  },
+  acceptableUse: {
+    title: 'Acceptable Use Policy',
+    sections: [
+      { heading: 'Authorized Access', body: 'Use this portal only with an account assigned by the restaurant or platform administrator.' },
+      { heading: 'Responsible Usage', body: 'Manage menus, inventory, orders, and analytics carefully. Review changes before saving and protect customer and restaurant information.' },
+      { heading: 'Prohibited Activities', body: 'Do not share credentials, attempt unauthorized branch access, alter records dishonestly, or export data without permission.' },
+    ],
+  },
+};
+
+export default function LoginPage() {
+  const navigate = useNavigate();
+  const { login, isAuthenticated, loading, error, user, forgotPassword } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [localError, setLocalError] = useState('');
+  const [staySignedIn, setStaySignedIn] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState('');
+  const [resetCooldown, setResetCooldown] = useState(0);
+  const [activeFooterContent, setActiveFooterContent] = useState(null);
+  const cooldownRef = useRef(null);
+
+  const footerContent = activeFooterContent ? FOOTER_CONTENT[activeFooterContent] : null;
+
+  useEffect(() => () => {
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+  }, []);
+
+  // Route authenticated users to their workspace.
+  useEffect(() => {
+    if (!isAuthenticated || !user?.email) return;
+    if (isUserAdmin(user.email)) {
+      navigate('/home-admin', { replace: true });
+      return;
+    }
+    const branchId = getUserBranch(user.email);
+    navigate(`/home/${branchId || 'branch1'}`, { replace: true });
+  }, [isAuthenticated, user, navigate]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLocalError('');
+    setResetSuccess('');
+
+    if (!email.trim()) {
+      setLocalError('Please enter your email');
+      return;
+    }
+
+    if (isForgotPassword) {
+      const success = await forgotPassword(email.trim());
+      if (success) {
+        setResetSuccess('Password reset link sent! Please check your email.');
+        setResetCooldown(180);
+        if (cooldownRef.current) clearInterval(cooldownRef.current);
+        cooldownRef.current = setInterval(() => {
+          setResetCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(cooldownRef.current);
+              cooldownRef.current = null;
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+      return;
+    }
+
+    if (!password) {
+      setLocalError('Please enter your password');
+      return;
+    }
+
+    const success = await login(email.trim(), password);
+    if (!success) {
+      setLocalError('Login failed. Please check your credentials.');
+    }
+  }
+
+  return (
+    <div className="lg__page">
+      <div className="lg__box">
+        <div className="lg__logoSection">
+          <h1 className="lg__brandName">E-Menu Portal</h1>
+          <div className="lg__tagline">Restaurant Operations Management Platform</div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="lg__form">
+          <div className="lg__group">
+            <label htmlFor="email" className="lg__label">Email</label>
+            <input
+              id="email"
+              type="email"
+              placeholder="Enter your email"
+              className="lg__input"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+              autoComplete="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+
+          {!isForgotPassword && (
+            <div className="lg__group">
+              <label htmlFor="password" className="lg__label">Password</label>
+              <div className="lg__passwordWrap">
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter your password"
+                  className="lg__input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="lg__toggle"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? 'Mask password' : 'Reveal password'}
+                  aria-pressed={showPassword}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(localError || error) && (
+            <div className="lg__error" role="alert">
+              {localError || (typeof error === 'object' ? error.message : error)}
+            </div>
+          )}
+
+          {resetSuccess && <div className="lg__ok" role="status">{resetSuccess}</div>}
+
+          {!isForgotPassword ? (
+            <>
+              <div className="lg__options">
+                <label className="lg__stay">
+                  <input
+                    type="checkbox"
+                    checked={staySignedIn}
+                    onChange={(e) => setStaySignedIn(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Stay signed in
+                </label>
+                <button
+                  type="button"
+                  className="lg__link"
+                  onClick={() => {
+                    setIsForgotPassword(true);
+                    setLocalError('');
+                    setResetSuccess('');
+                  }}
+                >
+                  Forgot Password?
+                </button>
+              </div>
+
+              <button type="submit" className="lg__submit" disabled={loading}>
+                {loading && <span className="lg__spinner" aria-hidden="true" />}
+                {loading ? 'Logging in…' : 'Log In'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="submit" className="lg__submit" disabled={loading || resetCooldown > 0}>
+                {loading && <span className="lg__spinner" aria-hidden="true" />}
+                {loading
+                  ? 'Sending…'
+                  : resetCooldown > 0
+                    ? `Resend in ${Math.floor(resetCooldown / 60)}:${String(resetCooldown % 60).padStart(2, '0')}`
+                    : 'Send Reset Link'}
+              </button>
+              <button
+                type="button"
+                className="lg__back"
+                onClick={() => {
+                  setIsForgotPassword(false);
+                  setLocalError('');
+                  setResetSuccess('');
+                }}
+              >
+                Back to Login
+              </button>
+            </>
+          )}
+        </form>
+
+        <div className="lg__footer">
+          <button type="button" className="lg__footerLink" onClick={() => setActiveFooterContent('help')}>Need Help</button>
+          <button type="button" className="lg__footerLink" onClick={() => setActiveFooterContent('privacy')}>Privacy Policy</button>
+          <button type="button" className="lg__footerLink" onClick={() => setActiveFooterContent('cookies')}>Cookie Notice</button>
+          <button type="button" className="lg__footerLink" onClick={() => setActiveFooterContent('acceptableUse')}>Acceptable Use Policy</button>
+        </div>
+        <div className="lg__powered">Powered by Touch</div>
+      </div>
+
+      {footerContent && (
+        <div className="lg__modalOverlay" onClick={() => setActiveFooterContent(null)}>
+          <div
+            className="lg__modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="footer-info-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="lg__modalHead">
+              <h2 id="footer-info-title">{footerContent.title}</h2>
+              <button type="button" className="lg__modalClose" onClick={() => setActiveFooterContent(null)} aria-label="Close dialog">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="lg__modalBody">
+              {footerContent.sections.map((section) => (
+                <section key={section.heading}>
+                  <h3>{section.heading}</h3>
+                  <p>{section.body}</p>
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
