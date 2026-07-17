@@ -1,0 +1,15 @@
+pack: sales
+version: 1
+rules:
+  - rule_id: sales.drop
+    enabled: false
+    category: SALES_ANOMALY
+    evaluator: delta_pct
+    metric: sales.delta_vs_baseline_pct
+    operator: "<"
+    value: -30
+    severity_bands:
+      - {when: "< -30", severity: HIGH}
+      - {when: "< -50", severity: CRITICAL}
+    suppression: {cooldown_minutes: 30, hysteresis: {clear_when: ">= -20"}}
+    analyst_policy: LLM_ALWAYS

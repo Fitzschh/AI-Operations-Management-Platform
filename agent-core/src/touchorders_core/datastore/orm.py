@@ -117,6 +117,24 @@ class BaselineRow(Base, TenantRow):
     __table_args__ = (UniqueConstraint("tenant_id", "metric_id", "entity_id", "hour_of_week", name="uq_baseline"),)
 
 
+class MetricWindowRow(Base, TenantRow):
+    __tablename__ = "metric_windows"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    metric_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    n: Mapped[int] = mapped_column(Integer, default=1)
+    __table_args__ = (UniqueConstraint("tenant_id", "metric_id", "entity_id", "bucket_start", name="uq_metric_bucket"),)
+
+
+class IngestionReceiptRow(Base):
+    __tablename__ = "ingestion_receipts"
+    source: Mapped[str] = mapped_column(String(80), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class KPISnapshotRow(Base, TenantRow):
     __tablename__ = "kpi_snapshots"
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

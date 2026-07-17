@@ -1,0 +1,15 @@
+pack: kitchen
+version: 1
+rules:
+  - rule_id: kitchen.delay
+    enabled: true
+    category: KITCHEN_OVERLOAD
+    evaluator: threshold
+    metric: kitchen.avg_ticket_delay_15m
+    operator: ">"
+    value: 18
+    severity_bands:
+      - {when: "> 18", severity: HIGH}
+      - {when: "> 30", severity: CRITICAL}
+    suppression: {cooldown_minutes: 30, hysteresis: {clear_when: "<= 15"}}
+    analyst_policy: LLM_ALWAYS

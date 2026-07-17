@@ -7,6 +7,7 @@ import os
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from touchorders_core.datastore.orm import Base
 
 
 config = context.config
@@ -18,7 +19,7 @@ if config.config_file_name is not None:
 if database_url := os.environ.get("DB_URL"):
     config.set_main_option("sqlalchemy.url", database_url)
 
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:

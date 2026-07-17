@@ -1,0 +1,21 @@
+pack: inventory
+version: 1
+rules:
+  - rule_id: inventory.low_stock
+    enabled: true
+    category: INVENTORY_RISK
+    evaluator: threshold
+    scope: per_entity
+    metric: inventory.remaining_units
+    operator: "<"
+    value: 20
+    severity_bands:
+      - {when: "< 20", severity: WARNING}
+      - {when: "< 10", severity: HIGH}
+      - {when: "<= 0", severity: CRITICAL}
+    suppression:
+      cooldown_minutes: 30
+      hysteresis: {clear_when: ">= 25"}
+      escalation: {fires_within_cooldown: 3, action: bump_severity}
+    analyst_policy: LLM_IF_SEVERITY_AT_LEAST_HIGH
+    extra_metrics: [inventory.projected_stockout_minutes, inventory.avg_hourly_consumption]
