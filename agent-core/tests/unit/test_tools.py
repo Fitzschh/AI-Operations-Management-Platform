@@ -90,6 +90,17 @@ def test_g5_idempotency_dedup_skips_a_repeated_effect(executor, ctx) -> None:
     assert second.status == "SKIPPED_DUPLICATE"
 
 
+def test_idempotency_is_per_key_not_global(executor, ctx) -> None:
+    # The same tool+args in two DIFFERENT workflow steps must both run; only a retry of the
+    # SAME step (same idempotency key) is deduped.
+    args = _po_args()
+    step_a = executor.execute("draft_purchase_order", args, ctx, idempotency_key="wf-1:1")
+    step_b = executor.execute("draft_purchase_order", args, ctx, idempotency_key="wf-2:1")
+    retry_a = executor.execute("draft_purchase_order", args, ctx, idempotency_key="wf-1:1")
+    assert step_a.ok and step_b.ok  # independent steps are not falsely deduped
+    assert retry_a.status == "SKIPPED_DUPLICATE"  # same key -> exactly-once
+
+
 def test_happy_path_effect_produces_output(executor, ctx) -> None:
     result = executor.execute("draft_purchase_order", _po_args(), ctx)
     assert result.ok

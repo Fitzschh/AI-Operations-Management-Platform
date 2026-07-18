@@ -43,8 +43,10 @@ class ToolResult:
         return self.status == "COMPLETED"
 
 
-def _args_hash(tool: RegisteredTool, arguments: dict[str, Any]) -> str:
-    material = f"{tool.definition.name}|{tool.definition.version}|{canonical_json(arguments)}"
+def _args_hash(tool: RegisteredTool, arguments: dict[str, Any], idempotency_key: str | None = None) -> str:
+    # Include the idempotency key so dedup is per-step (exactly-once, NFR-6): retrying the same
+    # workflow step dedups, but the same tool+args in a different step/workflow does not collide.
+    material = f"{tool.definition.name}|{tool.definition.version}|{canonical_json(arguments)}|{idempotency_key or ''}"
     return hashlib.sha256(material.encode()).hexdigest()
 
 
@@ -74,7 +76,7 @@ class ToolExecutor:
 
     def execute(self, tool_name: str, arguments: dict[str, Any], ctx: ToolContext, *, idempotency_key: str | None = None) -> ToolResult:
         tool = self._registry.get(tool_name)
-        args_hash = _args_hash(tool, arguments)
+        args_hash = _args_hash(tool, arguments, idempotency_key)
 
         # G1 + G2
         try:
@@ -112,7 +114,7 @@ class ToolExecutor:
             output=output, correlation_id=ctx.correlation_id,
         )
         self._audit.write(
-            actor=f"system:tool_executor", action="tool.executed", entity_type="tool", entity_id=tool.definition.name,
+            actor="system:tool_executor", action="tool.executed", entity_type="tool", entity_id=tool.definition.name,
             correlation_id=ctx.correlation_id,
             payload={"invocation_id": invocation_id, "status": status, "args_hash": args_hash, "side_effects": tool.definition.side_effects.value},
         )

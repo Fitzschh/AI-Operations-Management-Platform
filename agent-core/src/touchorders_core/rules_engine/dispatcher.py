@@ -42,7 +42,9 @@ class Dispatcher:
 
     @staticmethod
     def _template(event: OperationalEvent) -> IncidentReport:
-        category = IncidentCategory(event.event_type.split(".")[1]) if event.event_type.split(".")[1] in IncidentCategory._value2member_map_ else IncidentCategory.COMPOSITE
+        # event_type is "operational.<category_lower>.<rule>"; category enum values are uppercase.
+        segment = event.event_type.split(".")[1].upper()
+        category = IncidentCategory(segment) if segment in IncidentCategory._value2member_map_ else IncidentCategory.COMPOSITE
         first_metric, first_value = next(iter(event.metrics.items()), ("observed_value", 0.0))
         severity = Severity.WARNING if event.severity == Severity.INFO else event.severity
         return IncidentReport(produced_by="system_template", category=category, severity=severity, title=f"{event.rule_id} detected", summary="A deterministic operating threshold was crossed. Review the attached metric evidence.", evidence=[Evidence(metric=first_metric, value=first_value, source_event_id=event.event_id)], correlated_signals=[event.event_type], suspected_causes=[], recommended_focus=["Review the affected operational metric."], requires_manager_attention=severity.rank >= Severity.HIGH.rank, source_event_ids=[event.event_id], dedup_fingerprint=event.dedup_fingerprint, correlation_id=event.correlation_id)
