@@ -9,7 +9,7 @@
 | **Author** | Principal AI Systems Architect |
 | **Implementer** | GPT-5.6 Terra (autonomous implementation from this document) |
 | **Context** | OpenAI Build Week Hackathon; supersedes the UiPath Orchestrator coordination layer |
-| **Revision 1.1** | Backend deployment revised to a **single FastAPI service on Railway** acting as the **Backend-for-Frontend (BFF)**. Every serverless path (Firebase Cloud Functions, Cloud Run) is removed — hard constraint. Firebase is confined to **Authentication + Realtime Database (sync)**; the frontend deploys to **Vercel**. All other architectural decisions — the multi-agent design, deterministic Rules Engine, Tool Registry, Human Approval Pipeline, LLM Gateway, and Memory — are preserved unchanged. Affected sections: §0.3, §1.3 (P11), §1.4, §2.5 (new), §6.6 (new), §13, §14.1, §15.1, §18 (ADR-17). |
+| **Revision 1.1** | Backend deployment revised to a **single FastAPI service on Railway** acting as the **Backend-for-Frontend (BFF)**. Every serverless path (Firebase Cloud Functions, Cloud Run) is removed — hard constraint. Firebase is confined to **Authentication + Hosting (static SPA) + Realtime Database (sync)**; the frontend deploys to **Firebase Hosting**. All other architectural decisions — the multi-agent design, deterministic Rules Engine, Tool Registry, Human Approval Pipeline, LLM Gateway, and Memory — are preserved unchanged. Affected sections: §0.3, §1.3 (P11), §1.4, §2.5 (new), §6.6 (new), §13, §14.1, §15.1, §18 (ADR-17). |
 | **Status** | Ready for implementation review |
 
 ---
@@ -64,7 +64,7 @@ data, applied fixed rules, and pushed notifications. That architecture is replac
 
 **Deployment model (Revision 1.1).** The system runs as a **single FastAPI backend deployed on
 Railway**, acting as the **Backend-for-Frontend (BFF)** for both the React dashboard (deployed on
-Vercel) and the tablet app. Clients never talk to OpenAI, the Rules Engine, the agents, or the
+Firebase Hosting) and the tablet app. Clients never talk to OpenAI, the Rules Engine, the agents, or the
 Workflow Engine directly — they call FastAPI, which owns all business logic, AI orchestration, tool
 execution, and database writes. **Firebase is not the backend.** It provides only Authentication
 (identity, session validation) and the Realtime Database used to synchronize state between the
@@ -213,7 +213,7 @@ Chosen for hackathon velocity **with** production seams; every choice lists its 
 | Config | `pydantic-settings` (env) + YAML rule/agent packs | Thresholds and prompts change without code changes | Config service |
 | Observability | `structlog` JSON logs, correlation IDs, `llm_calls` cost ledger, Prometheus-format `/metrics` | Cost visibility is a first-class requirement | OTel exporters |
 | Backend deployment | Single FastAPI service (Uvicorn) on **Railway**; secrets via **Railway Environment Variables** | Zero-serverless: one long-lived process keeps the event loop, in-process priority queue, APScheduler, and warm caches the design depends on — no cold starts, no per-invocation state loss, one place holds the OpenAI key (P4) | Scale to N Railway replicas behind Railway's proxy (§16); managed Postgres add-on via `DATABASE_URL` |
-| Client hosting | React/Vite dashboard on **Vercel**; tablet app consumes the same FastAPI BFF API | Static/edge hosting for the SPA; all dynamic behavior is the FastAPI backend | Unchanged |
+| Client hosting | React/Vite dashboard on **Firebase Hosting**; tablet app consumes the same FastAPI BFF API | Static CDN hosting for the SPA, co-located with Firebase Auth/RTDB the app already uses; all dynamic behavior is the FastAPI backend | Unchanged |
 
 **Design rationale — why not LangChain/LangGraph/CrewAI.** The system has exactly three agents
 with fixed, asymmetric roles and a deterministic router between them. A framework would add a
@@ -397,7 +397,7 @@ static frontend. There are no serverless functions (P11, ADR-17).
 ```
 ┌─────────────────────────┐        ┌─────────────────────────┐
 │  React Dashboard         │        │  Tablet App             │
-│  (Vercel — static/edge)  │        │  (in-restaurant)        │
+│  (Firebase Hosting)      │        │  (in-restaurant)        │
 └───────────┬─────────────┘        └───────────┬─────────────┘
             │  HTTPS (REST + WebSocket)                     │
             │  Firebase ID token + App Check on every call  │
@@ -437,7 +437,7 @@ backend evolve independently of the clients.
 
 | Platform | Owns | Never does |
 |---|---|---|
-| **Vercel** | Hosting the React/Vite SPA (static/edge) | Any AI, business logic, or secrets |
+| **Firebase Hosting** | Serving the React/Vite SPA (static CDN) | Any AI, business logic, secrets, Cloud Functions, or rewrites to executable backends |
 | **FastAPI on Railway** | *Everything dynamic*: LLM Gateway + one OpenAI client, all three agents, Rules/Analytics/Forecast engines, Memory Store, Tool Registry, Workflow Engine, Approval Pipeline, notifications, audit, REST + WebSocket, Firebase ID-token verification, the Firebase adapter | — |
 | **Firebase Authentication** | Identity, sign-in, session tokens (verified by FastAPI) | Authorizing business actions (FastAPI does) |
 | **Firebase Realtime Database** | Live sync between backend, dashboard, and tablet | Storing prompts, agent state, memory, rules, tools, or business logic; executing anything |
@@ -1682,7 +1682,7 @@ Indexing rules: every FK; `operational_events(status, severity, detected_at)` fo
 ## 13. API Layer
 
 The FastAPI service on Railway is the system's **single Backend-for-Frontend (BFF)**: the React
-dashboard (Vercel) and the tablet call it for everything — business data, AI results, approvals —
+dashboard (Firebase Hosting) and the tablet call it for everything — business data, AI results, approvals —
 and it is the only component that talks to OpenAI, the Rules Engine, the agents, and the Workflow
 Engine, or writes domain state back to Firebase. Clients hold no AI credentials and run no AI or
 orchestration logic (P11, §2.5, ADR-17). It is one long-lived service (no serverless), so the

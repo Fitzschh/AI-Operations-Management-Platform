@@ -11,6 +11,9 @@ from touchorders_core.datastore.orm import Base
 
 
 def create_database_engine(database_url: str) -> Engine:
+    # Railway/Heroku-style URLs may use the legacy postgres:// scheme, which SQLAlchemy 2 rejects.
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
     engine = create_engine(database_url, future=True, pool_pre_ping=True)
     if database_url.startswith("sqlite"):
         @event.listens_for(engine, "connect")

@@ -58,11 +58,17 @@ export async function fetchWithAppCheck(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (appCheckToken) headers.set('X-Firebase-AppCheck', appCheckToken);
 
-  // 3. Append Auth Token to URL for Firebase REST API
+  // 3. Attach the auth token. Firebase RTDB REST requires it as the ?auth= query param; every
+  // other backend (the FastAPI BFF) gets it as an Authorization header instead, so the token
+  // never appears in URLs, access logs, or proxy logs.
   let finalUrl = url;
   if (authToken) {
-    const separator = finalUrl.includes('?') ? '&' : '?';
-    finalUrl = `${finalUrl}${separator}auth=${authToken}`;
+    if (databaseURL && url.startsWith(databaseURL)) {
+      const separator = finalUrl.includes('?') ? '&' : '?';
+      finalUrl = `${finalUrl}${separator}auth=${authToken}`;
+    } else {
+      headers.set('Authorization', `Bearer ${authToken}`);
+    }
   }
 
   return fetch(finalUrl, { ...options, headers });

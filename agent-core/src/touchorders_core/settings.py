@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     cors_allow_origins: str = Field(
         default="*",
         validation_alias=AliasChoices("TOUCHORDERS_CORS_ORIGINS", "CORS_ORIGINS"),
-        description="Comma-separated allowed origins for the Vercel frontend / tablet; '*' in dev.",
+        description="Comma-separated allowed origins for the Firebase Hosting frontend / tablet; '*' in dev.",
     )
 
     @property

@@ -54,8 +54,13 @@ Railway Variables UI or CLI, never in this repository.
 | `FIREBASE_DATABASE_URL` | sensitive configuration | RTDB URL; service scope only. |
 | `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | configuration | Firebase token validation values; do not put them in the frontend unless intentionally public. |
 | `TOUCHORDERS_ENVIRONMENT` | configuration | `production` |
+| `TOUCHORDERS_CORS_ORIGINS` | configuration | Exact Firebase Hosting origins, comma-separated (e.g. `https://<project>.web.app,https://<project>.firebaseapp.com`). Never `*` in production. |
 | `TOUCHORDERS_LOG_LEVEL` | configuration | `INFO` |
 | `TOUCHORDERS_LOG_JSON` | configuration | `true` |
+
+The frontend is deployed to **Firebase Hosting** — never to Railway or any other host. Its only
+deployment-time variable is the non-secret `VITE_API_BASE_URL` — the Railway backend origin —
+set in the build environment before `npm run build && firebase deploy --only hosting`.
 
 Keep variables service-scoped rather than project-shared unless a second trusted backend
 service demonstrably needs the same value. Railway reference variables are appropriate for the
