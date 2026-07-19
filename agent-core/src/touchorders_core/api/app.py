@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from touchorders_core import __version__
+from touchorders_core.api.auth import IdentityVerifier
+from touchorders_core.api.routes.ai import router as ai_router
+from touchorders_core.llm.gateway import LLMGateway
 from touchorders_core.observability.logging import configure_logging, get_logger
 from touchorders_core.settings import Settings, get_settings
 
@@ -19,8 +23,18 @@ class HealthResponse(BaseModel):
     environment: str
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Create the application without constructing future runtime services."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    gateway: LLMGateway | None = None,
+    identity_verifier: IdentityVerifier | None = None,
+) -> FastAPI:
+    """Create the BFF application.
+
+    ``gateway`` and ``identity_verifier`` are injected by the composition root (real) or by tests
+    (fakes). When absent, the AI routes return 503 rather than constructing an OpenAI client, so
+    ``/health`` still runs with no external credentials.
+    """
 
     runtime_settings = settings or get_settings()
     configure_logging(level=runtime_settings.log_level, json_output=runtime_settings.log_json)
@@ -31,6 +45,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Deterministic restaurant operations core with schema-constrained AI edges.",
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=runtime_settings.cors_origins_list,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Firebase-AppCheck"],
+        allow_credentials=False,
+    )
+    app.state.gateway = gateway
+    app.state.identity_verifier = identity_verifier
+    app.include_router(ai_router)
 
     @app.get("/health", response_model=HealthResponse, tags=["health"])
     async def health() -> HealthResponse:

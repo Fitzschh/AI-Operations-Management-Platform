@@ -157,6 +157,48 @@ class LLMGateway:
     def budget_status(self, agent: AgentName) -> BudgetStatus:
         return self._budget.status(agent)
 
+    def analysis_completion(
+        self,
+        *,
+        agent: AgentName,
+        purpose: str,
+        system_prompt: str,
+        user_prompt: str,
+        model: str,
+        max_output_tokens: int,
+        temperature: float,
+        correlation_id: str | None = None,
+    ) -> tuple[dict[str, Any], int, int]:
+        """Accounted JSON-object completion for the dashboard BFF (§13.4).
+
+        Distinct from ``structured_call`` (strict json_schema for the agents), this returns the
+        free-form JSON object the dashboard renders. It is NOT an unaccounted escape hatch: it goes
+        through the same budget gate, circuit breaker, single OpenAI client, and cost ledger, and
+        the prompts stay server-side. Returns (content, input_tokens, output_tokens).
+        """
+        self._budget.ensure_available(agent)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt, "purpose": purpose},
+        ]
+        started = time.perf_counter()
+        try:
+            response = self._client.complete(
+                model=model, messages=messages, response_format={"type": "json_object"},
+                read_tool_specs=[], max_output_tokens=max_output_tokens, temperature=temperature,
+            )
+        except Exception:
+            self._budget.record_failure(agent)
+            self._ledger.add(agent=agent.value, purpose=purpose, model=model, input_tokens=0, cached_input_tokens=0, output_tokens=0, latency_ms=int((time.perf_counter() - started) * 1000), outcome="ERROR", request_hash="", prompt_version="bff", correlation_id=correlation_id)
+            self._metrics.increment("llm_calls_total", agent=agent.value, outcome="error")
+            raise
+        content = response.content or {}
+        self._budget.record_usage(agent, input_tokens=response.input_tokens, output_tokens=response.output_tokens)
+        self._budget.record_success(agent)
+        self._ledger.add(agent=agent.value, purpose=purpose, model=model, input_tokens=response.input_tokens, cached_input_tokens=response.cached_input_tokens, output_tokens=response.output_tokens, latency_ms=int((time.perf_counter() - started) * 1000), outcome="SUCCESS", request_hash="", prompt_version="bff", correlation_id=correlation_id)
+        self._metrics.increment("llm_calls_total", agent=agent.value, outcome="success")
+        return content, response.input_tokens, response.output_tokens
+
     def structured_call(
         self,
         *,

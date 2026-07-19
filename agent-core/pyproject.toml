@@ -12,6 +12,7 @@ dependencies = [
   "alembic>=1.13,<2",
   "APScheduler>=3.10,<4",
   "fastapi>=0.115,<1",
+  "firebase-admin>=6.5,<7",
   "openai>=1.0,<3",
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
@@ -114,3 +115,6 @@ name = "API cannot bypass the LLM gateway or tool executor"
 type = "forbidden"
 source_modules = ["touchorders_core.api"]
 forbidden_modules = ["openai", "touchorders_core.tools.executor"]
+# DIRECT-import boundary: the API reaches openai only *through* the LLM gateway (the intended path,
+# not a bypass). The single-openai-chokepoint (P4) is separately enforced by the AST guard test.
+allow_indirect_imports = "true"

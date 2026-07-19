@@ -127,6 +127,18 @@ class Settings(BaseSettings):
             "AUTH_API_KEY_PEPPER", "TOUCHORDERS_AUTH_API_KEY_PEPPER"
         ),
     )
+    cors_allow_origins: str = Field(
+        default="*",
+        validation_alias=AliasChoices("TOUCHORDERS_CORS_ORIGINS", "CORS_ORIGINS"),
+        description="Comma-separated allowed origins for the Vercel frontend / tablet; '*' in dev.",
+    )
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        raw = self.cors_allow_origins.strip()
+        if raw == "*" or not raw:
+            return ["*"]
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     @classmethod
     def settings_customise_sources(
