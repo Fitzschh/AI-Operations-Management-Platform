@@ -1,4 +1,5 @@
 import { pilotAiConfig } from './pilotAiConfig';
+import { fetchWithAppCheck } from './firebase';
 import { buildSystemPrompt, buildDataPrompt, parseModelJson } from './aiPrompts';
 
 const CACHE_KEY_PREFIX = 'ai_analyst_cache_v2_';
@@ -20,20 +21,17 @@ function normalizeAnalysisMode(mode) {
 }
 
 async function requestAnalysis(analyticsData, mode, branchId) {
-  const { apiKey, model, endpoint } = pilotAiConfig;
-
-  if (!apiKey) {
-    throw new Error('OpenAI API key is not configured. Add VITE_OPENAI_API_KEY to .env.local.');
-  }
+  const { model, endpoint } = pilotAiConfig;
 
   const systemPrompt = buildSystemPrompt(mode);
   const dataPrompt = buildDataPrompt(analyticsData, mode);
 
-  const response = await fetch(endpoint, {
+  // fetchWithAppCheck attaches the Firebase App Check token and the signed-in user's ID token,
+  // which the server proxy verifies before it forwards to OpenAI with the server-held key.
+  const response = await fetchWithAppCheck(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model,

@@ -8,9 +8,16 @@
     ],
     "rewrites": [
       {
+        "source": "/api/ai/**",
+        "function": "openaiProxy"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ]
+  },
+  "functions": {
+    "source": "functions"
   }
 }
