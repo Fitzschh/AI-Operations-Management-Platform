@@ -25,8 +25,23 @@ def build_app(settings: Settings | None = None):
     configure_logging(level=settings.log_level, json_output=settings.log_json)
     logger = get_logger(__name__)
 
+    # ── Startup validation: require critical env vars in production/staging ──────────
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+
+    if settings.environment in ("production", "staging"):
+        missing = []
+        if not openai_key:
+            missing.append("OPENAI_API_KEY")
+        if not settings.cors_allow_origins or settings.cors_allow_origins == "*":
+            logger.warning("cors_origins_wildcard", detail="TOUCHORDERS_CORS_ORIGINS is '*'; restrict to exact origins in production")
+        if missing:
+            raise RuntimeError(
+                f"Required environment variable(s) missing for {settings.environment}: {', '.join(missing)}. "
+                "Set them in Railway Variables or the local .env file."
+            )
+
     gateway = None
-    if os.environ.get("OPENAI_API_KEY"):  # the key is read by OpenAIClient, never a Settings field (§14.1)
+    if openai_key:
         try:
             engine = create_database_engine(settings.database_url)
             initialize_schema(engine)  # hackathon; production runs Alembic (§12.1)

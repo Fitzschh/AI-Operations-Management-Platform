@@ -6,7 +6,7 @@ export const AUTH_CONFIG = {
             name: 'Branch 1'
         },
         branch2: {
-            emails: ['doralyncascato3@gmail.com', 'dummy@dummy.com'],
+            emails: ['doralyncascato3@gmail.com'],
             name: 'Sugar Cafe Nivel Hills'
         }
     }
