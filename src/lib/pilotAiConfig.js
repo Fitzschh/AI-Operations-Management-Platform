@@ -1,17 +1,18 @@
 /**
- * AI request configuration for the pilot.
+ * AI request configuration for the client.
  *
- * SECURITY: the OpenAI API key is NO LONGER present in the client. All AI requests now go to a
- * same-origin, authenticated server proxy (a Firebase Function mounted at /api/ai via a Hosting
- * rewrite) which holds the key server-side. Nothing secret ships to the browser bundle.
+ * SECURITY + ARCHITECTURE: the OpenAI API key is NOT in the client. All AI requests go to the
+ * FastAPI backend on Railway — the single Backend-for-Frontend (BFF) and the only holder of the
+ * key (ADR-17). There are no Firebase Cloud Functions, Cloud Run, or serverless AI paths.
  *
- * Override VITE_AI_PROXY_URL only if the proxy lives on a different origin (e.g. a Railway
- * backend); the default is the same-origin path so there is no CORS and no key exposure.
+ * VITE_API_BASE_URL is the Railway backend origin (e.g. https://touchorders-api.up.railway.app).
+ * Leave it empty for local dev behind a Vite proxy. The client sends the Firebase App Check token
+ * and the signed-in user's ID token (via fetchWithAppCheck); FastAPI verifies both server-side.
  */
 
-const PROXY_BASE = import.meta.env.VITE_AI_PROXY_URL || '/api/ai';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 export const pilotAiConfig = {
   model: 'gpt-4o-mini',
-  endpoint: `${PROXY_BASE}/chat/completions`,
+  endpoint: `${API_BASE}/api/ai/chat/completions`,
 };

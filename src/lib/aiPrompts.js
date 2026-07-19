@@ -1,6 +1,7 @@
 /**
  * AI prompt builders for the pilot.
- * Ported from functions/index.js for direct client-side OpenAI calls.
+ * These build the request payload the client sends to the FastAPI backend (BFF), which forwards
+ * it to OpenAI server-side. No client-side OpenAI calls; no serverless functions (ADR-17).
  */
 
 function stripEmoji(value) {

@@ -4,11 +4,12 @@
 |---|---|
 | **System** | TouchOrders Agent Core — AI-powered restaurant operations platform |
 | **Document type** | Software Architecture Specification (SAS) |
-| **Version** | 1.0 |
-| **Date** | 2026-07-17 |
+| **Version** | 1.1 |
+| **Date** | 2026-07-19 |
 | **Author** | Principal AI Systems Architect |
 | **Implementer** | GPT-5.6 Terra (autonomous implementation from this document) |
 | **Context** | OpenAI Build Week Hackathon; supersedes the UiPath Orchestrator coordination layer |
+| **Revision 1.1** | Backend deployment revised to a **single FastAPI service on Railway** acting as the **Backend-for-Frontend (BFF)**. Every serverless path (Firebase Cloud Functions, Cloud Run) is removed — hard constraint. Firebase is confined to **Authentication + Realtime Database (sync)**; the frontend deploys to **Vercel**. All other architectural decisions — the multi-agent design, deterministic Rules Engine, Tool Registry, Human Approval Pipeline, LLM Gateway, and Memory — are preserved unchanged. Affected sections: §0.3, §1.3 (P11), §1.4, §2.5 (new), §6.6 (new), §13, §14.1, §15.1, §18 (ADR-17). |
 | **Status** | Ready for implementation review |
 
 ---
@@ -60,6 +61,18 @@ data, applied fixed rules, and pushed notifications. That architecture is replac
 - GPT-5.6 agents replace nothing mechanical — they are introduced **only** where judgment is
   required: interpretation, correlation, prioritization, explanation, and planning.
 - A human restaurant manager remains the final authority for every business-critical action.
+
+**Deployment model (Revision 1.1).** The system runs as a **single FastAPI backend deployed on
+Railway**, acting as the **Backend-for-Frontend (BFF)** for both the React dashboard (deployed on
+Vercel) and the tablet app. Clients never talk to OpenAI, the Rules Engine, the agents, or the
+Workflow Engine directly — they call FastAPI, which owns all business logic, AI orchestration, tool
+execution, and database writes. **Firebase is not the backend.** It provides only Authentication
+(identity, session validation) and the Realtime Database used to synchronize state between the
+backend, the dashboard, and the tablet. There are **no Firebase Cloud Functions, no Cloud Run, and
+no serverless execution path anywhere in the system** — a hard architectural constraint (P11,
+ADR-17, §2.5). Firebase must never execute AI logic and must never contain agents, OpenAI calls,
+business logic, workflow orchestration, the Rules Engine, memory, or the Tool Registry; those live
+exclusively inside FastAPI.
 
 ### 0.4 Definitions and acronyms
 
@@ -181,6 +194,7 @@ through typed tools and human approval, never free-form model output).
 | P8 | **Extensible by registration, not modification** | New agents, tools, rules, and notification channels plug in via declarative registration; core modules are closed to modification (§19). |
 | P9 | **Degrade to dumb-but-safe** | If the LLM is unavailable or over budget, the system falls back to deterministic template alerts to humans. Monitoring never goes dark because AI failed (§14.4). |
 | P10 | **One writer per datum** | Each table/state has exactly one writing component; everyone else reads (§12.3). |
+| P11 | **One backend, no serverless (BFF)** | Exactly one deployable backend — a FastAPI service on Railway — owns all AI, business, and execution logic and is the sole surface clients call. No Cloud Function, Cloud Run, or other serverless path may execute AI or business logic. Firebase is a sync/auth layer, never an execution layer (§2.5, §13.4, ADR-17). |
 
 ### 1.4 Technology selection
 
@@ -198,6 +212,8 @@ Chosen for hackathon velocity **with** production seams; every choice lists its 
 | Domain data ingestion | Adapters: Firebase RTDB listener (existing pilot data), generic webhook, synthetic simulator | Reuses the live pilot database; simulator makes demos deterministic | Additional POS adapters |
 | Config | `pydantic-settings` (env) + YAML rule/agent packs | Thresholds and prompts change without code changes | Config service |
 | Observability | `structlog` JSON logs, correlation IDs, `llm_calls` cost ledger, Prometheus-format `/metrics` | Cost visibility is a first-class requirement | OTel exporters |
+| Backend deployment | Single FastAPI service (Uvicorn) on **Railway**; secrets via **Railway Environment Variables** | Zero-serverless: one long-lived process keeps the event loop, in-process priority queue, APScheduler, and warm caches the design depends on — no cold starts, no per-invocation state loss, one place holds the OpenAI key (P4) | Scale to N Railway replicas behind Railway's proxy (§16); managed Postgres add-on via `DATABASE_URL` |
+| Client hosting | React/Vite dashboard on **Vercel**; tablet app consumes the same FastAPI BFF API | Static/edge hosting for the SPA; all dynamic behavior is the FastAPI backend | Unchanged |
 
 **Design rationale — why not LangChain/LangGraph/CrewAI.** The system has exactly three agents
 with fixed, asymmetric roles and a deterministic router between them. A framework would add a
@@ -372,6 +388,75 @@ flowchart TB
 **Design rationale.** The single-writer column operationalizes P10: race conditions and
 split-brain state are prevented by construction, not by locking discipline. Reviewers can
 verify safety properties (e.g., NFR-5) by inspecting exactly one writer per state machine.
+
+### 2.5 Deployment topology and Backend-for-Frontend (BFF) model
+
+The system deploys as **one FastAPI backend on Railway** plus managed Firebase services and a
+static frontend. There are no serverless functions (P11, ADR-17).
+
+```
+┌─────────────────────────┐        ┌─────────────────────────┐
+│  React Dashboard         │        │  Tablet App             │
+│  (Vercel — static/edge)  │        │  (in-restaurant)        │
+└───────────┬─────────────┘        └───────────┬─────────────┘
+            │  HTTPS (REST + WebSocket)                     │
+            │  Firebase ID token + App Check on every call  │
+            └───────────────────┬───────────────────────────┘
+                                 ▼
+                 ┌───────────────────────────────────────────┐
+                 │   FastAPI Backend  (Railway, single svc)   │  ◄── the ONLY backend / BFF
+                 │  ── Authentication verification (Firebase  │
+                 │       ID-token verify; RBAC)               │
+                 │  ── Business APIs (incidents, reports,     │
+                 │       plans, approvals, workflows, tools)  │
+                 │  ── LLM Gateway  (sole OpenAI key holder)  │──► OpenAI GPT-5.6
+                 │  ── AI agents: Operations Manager ·        │
+                 │       Business Analyst · Realtime Analyst  │
+                 │  ── Rules Engine · Analytics/Forecast      │
+                 │  ── Memory Store · Tool Registry           │
+                 │  ── Workflow Engine · Approval Pipeline    │
+                 │  ── Audit Log · Notifications · Scheduler  │
+                 │  ── Firebase Adapter (the only RTDB I/O)   │
+                 └───────┬───────────────────────────┬────────┘
+                         │                           │
+              ┌──────────▼──────────┐     ┌──────────▼──────────┐
+              │ PostgreSQL          │     │ Firebase            │
+              │ (Railway add-on;    │     │  · Authentication   │
+              │  agentic system of  │     │  · Realtime DB      │
+              │  record)            │     │    (client sync)    │
+              └─────────────────────┘     └─────────────────────┘
+```
+
+**Backend-for-Frontend contract.** Clients (dashboard, tablet) never reach AI, the Rules Engine,
+tools, or the Workflow Engine. They **read/observe** domain state via Firebase RTDB and **act** by
+calling FastAPI; FastAPI coordinates business logic, AI reasoning, and database writes, then writes
+results back to RTDB for clients to observe. This gives a clean separation of concerns and lets the
+backend evolve independently of the clients.
+
+**What each platform owns:**
+
+| Platform | Owns | Never does |
+|---|---|---|
+| **Vercel** | Hosting the React/Vite SPA (static/edge) | Any AI, business logic, or secrets |
+| **FastAPI on Railway** | *Everything dynamic*: LLM Gateway + one OpenAI client, all three agents, Rules/Analytics/Forecast engines, Memory Store, Tool Registry, Workflow Engine, Approval Pipeline, notifications, audit, REST + WebSocket, Firebase ID-token verification, the Firebase adapter | — |
+| **Firebase Authentication** | Identity, sign-in, session tokens (verified by FastAPI) | Authorizing business actions (FastAPI does) |
+| **Firebase Realtime Database** | Live sync between backend, dashboard, and tablet | Storing prompts, agent state, memory, rules, tools, or business logic; executing anything |
+| **OpenAI** | GPT-5.6 inference behind the gateway | Being reachable by any client |
+
+**Environment-variable strategy.** All secrets live in **Railway Environment Variables** on the
+one backend service — never in the frontend bundle, Firebase, the tablet, or a serverless function
+(there are none). Canonical set: `OPENAI_API_KEY` (the single shared key, read only by
+`llm/gateway.py`), `DATABASE_URL` (`${{Postgres.DATABASE_URL}}`), `FIREBASE_SERVICE_ACCOUNT_JSON`
+(least-privileged; used by the adapter and for ID-token verification), `AUTH_API_KEY_PEPPER`,
+`TOUCHORDERS_ENVIRONMENT=production`, and logging/budget config. The frontend carries only
+non-secret, public Firebase web config plus `VITE_API_BASE_URL` (the Railway backend origin).
+
+**Design rationale.** A serverless function per AI call would lose the warm event loop, the
+in-process priority queue (§7.6), APScheduler (§7.5), and the memory cache (§9.2) the deterministic
+core depends on, and would fragment the single-LLM-chokepoint (P4) and single-writer (P10)
+guarantees across cold-started instances each needing the key. One long-lived FastAPI process keeps
+all four async loops (§2.2) co-resident and gives clients exactly one authenticated surface. Scale
+is Railway replicas behind its proxy (§16) — an ops change, not an architecture change.
 
 ---
 
@@ -949,6 +1034,42 @@ echo (A-4). Timestamps are UTC ISO-8601; restaurant-local time appears only at p
   deduplicate by ID. Effects are exactly-once via tool idempotency keys (§8.2).
 - Poison events (3 failed dispatch attempts) move to `DEAD_LETTER` status and raise an
   operator notification; they never block the queue.
+
+### 6.6 Client synchronization flow (Firebase syncs; FastAPI executes)
+
+Clients invoke no AI or execution logic. They read/write domain state and observe changes through
+Firebase, while **FastAPI on Railway is the only component that runs logic**:
+
+```
+Tablet ──(order / inventory write)──► Firebase RTDB
+                                          │  (change stream)
+                                          ▼
+                        FastAPI Firebase adapter (Railway)   ◄── FastAPI receives the update
+                                          │
+                                          ▼
+                             Rules Engine (deterministic)     ◄── meaningful event?
+                          ┌───────────────┴───────────────┐
+                         no                               yes
+                          │                                ▼
+                         stop (0 tokens)          GPT-5.6 via LLM Gateway
+                                                          │
+                                                 AI Operations Manager
+                                                          │
+                                                    Tool Registry
+                                                          │
+                                           Workflow Engine (Python executes tools)
+                                                          │
+                                         Firebase adapter writes result to RTDB
+                                                          │
+                                                          ▼
+                                     Dashboard observes RTDB → live notification
+```
+
+Two invariants make this safe and cheap: (1) **GPT is never triggered from Firebase** — a Firebase
+change only *notifies* FastAPI, and only the deterministic Rules Engine inside FastAPI may decide to
+wake an agent (§7.1); (2) effects reach clients exactly one way — FastAPI writes the result to RTDB
+and the dashboard/tablet observe it. GPT selects tools; Python executes them; the backend updates
+Firebase; the frontend observes the change.
 
 ---
 
@@ -1560,6 +1681,14 @@ Indexing rules: every FK; `operational_events(status, severity, detected_at)` fo
 
 ## 13. API Layer
 
+The FastAPI service on Railway is the system's **single Backend-for-Frontend (BFF)**: the React
+dashboard (Vercel) and the tablet call it for everything — business data, AI results, approvals —
+and it is the only component that talks to OpenAI, the Rules Engine, the agents, and the Workflow
+Engine, or writes domain state back to Firebase. Clients hold no AI credentials and run no AI or
+orchestration logic (P11, §2.5, ADR-17). It is one long-lived service (no serverless), so the
+WebSocket channel (§13.2), the in-process queues, and the scheduler are all co-resident with the
+request handlers.
+
 ### 13.1 REST endpoints (`/api/v1`)
 
 | Method & path | Auth (§13.3) | Purpose |
@@ -1607,15 +1736,36 @@ frames are deliberately thin (IDs + summaries) — the client fetches detail via
   principal (§10.3).
 - Rate limits: ingestion 60 rpm/key; approval decisions 30 rpm/user (fat-finger protection).
 
+### 13.4 Firebase integration boundary (auth + sync only)
+
+Firebase touches the system at exactly two seams, both mediated by FastAPI — never the reverse:
+
+- **Authentication flow.** Firebase Authentication issues identity/session tokens to human users
+  in the client. Every client → FastAPI call carries the Firebase **ID token** (plus an App Check
+  token); FastAPI **verifies it server-side** (Firebase Admin SDK / JWKS), maps it to a local
+  `users` row and role, and only then authorizes the action (§13.3). Firebase performs no
+  authorization of business actions; FastAPI is the sole verifier and gatekeeper.
+- **Realtime Database (sync).** The ingestion **Firebase adapter** is the *only* module that talks
+  to RTDB. It mirrors domain changes into local tables (one-way read) and writes approved effects
+  back so the dashboard and tablet observe them live. RTDB stores **no** prompts, agent state,
+  memory, tools, rules, workflow logic, or OpenAI calls — those are FastAPI-only (§7, §8, §9, §14).
+
+The client contract is therefore **read/observe via Firebase, act via FastAPI**: no client path
+reaches OpenAI or an executor, and no Firebase primitive executes AI or orchestration logic.
+
 ---
 
 ## 14. LLM Gateway — the Centralized OpenAI Service
 
 ### 14.1 Responsibilities
 
-`llm/gateway.py` is the **only** module that imports the OpenAI SDK and the only reader of
-`OPENAI_API_KEY` (env / secret manager). All three agents share the key by construction —
-they cannot hold credentials because they cannot reach the SDK (import-linter, §5.3).
+`llm/gateway.py` is the **only** module that imports the OpenAI SDK, constructs **one** OpenAI
+client, and is the only reader of `OPENAI_API_KEY` — a **single Railway Environment Variable** on
+the backend service, never present in the frontend, Firebase, the tablet, or any serverless
+function (there are none). All three agents share that one client and key by construction — they
+cannot hold credentials or create their own client because they cannot reach the SDK (import-linter,
+§5.3). Agents are distinguished **only** by their system prompt, available tools, context builder,
+and memory namespace (§3.2) — never by a separate client or duplicated auth.
 
 The gateway owns, for every call: request assembly, structured-output enforcement, retries,
 timeouts, budgets, caching, token accounting, numeric echo validation, and degradation.
@@ -1688,11 +1838,14 @@ an unstructured LLM call, so no future feature can quietly bypass schemas or acc
 
 ### 15.1 Credential and key management
 
-- `OPENAI_API_KEY` only in environment/secret store; read once by the gateway; never logged
-  (structlog processor scrubs `sk-`-prefixed strings defensively); absent from all agent
-  bundles, tool arguments, and error payloads.
-- The previous pilot made **client-side** OpenAI calls (key exposure risk in the browser).
-  This architecture moves all LLM access server-side behind the gateway — an explicit security
+- `OPENAI_API_KEY` lives **only** in the Railway backend's Environment Variables; read once by the
+  gateway; never exposed to the frontend, Firebase, the tablet, the dashboard, or any serverless
+  function (there are none). Never logged (structlog scrubs `sk-`-prefixed strings defensively);
+  absent from all agent bundles, tool arguments, and error payloads.
+- The previous pilot made **client-side** OpenAI calls with the key compiled into the browser
+  bundle — publicly readable and therefore auto-revoked by OpenAI once leaked. This architecture
+  moves all LLM access to the FastAPI backend on Railway behind the single gateway: the key never
+  reaches a client, so it cannot be scraped or revoked. This is an explicit, verifiable security
   improvement to call out in review.
 - Firebase service credentials scoped read-only for the ingestion adapter, except the specific
   paths written by tools (menu availability), which use a separately scoped credential.
@@ -1835,6 +1988,7 @@ alternatives that were rejected and why. Format: Architecture Decision Record, a
 | ADR-14 | Saga compensation + staleness gates; no distributed transactions | 2PC; "fire and hope"; manual-only rollback | Effects span external channels — 2PC impossible. Compensation with declared per-tool strategies + `precondition_max_age` avoids most rollbacks entirely (§10.5). |
 | ADR-15 | Hash-chained, fail-closed audit log | Plain log table; external ledger | Tamper-evidence ~10 lines of code; fail-closed makes "unaudited action" unrepresentable (P7). External ledger is overkill. |
 | ADR-16 | Degrade to deterministic alerting (P9) | Queue-and-wait during LLM outage; hard fail | A restaurant can't pause dinner service for an API outage; monitoring floor must be non-AI (§14.4). |
+| ADR-17 | Single FastAPI backend on Railway as the Backend-for-Frontend (BFF); **no serverless** | Firebase Cloud Functions / Cloud Run proxy for AI; splitting agents across serverless functions; a thin edge proxy plus a separate agent service; Firebase-hosted execution | A serverless function per AI call loses the warm event loop, the in-process priority queue (§7.6), APScheduler (§7.5), and the memory cache (§9.2) the deterministic core depends on, and fragments the single-LLM-chokepoint (P4) and single-writer (P10) guarantees across cold-started instances each needing the key. One long-lived FastAPI process on Railway keeps all four async loops (§2.2) co-resident, holds the only OpenAI key in one Railway env var, verifies Firebase auth in one place, and gives clients one authenticated surface (BFF, §2.5). *Consequence:* the backend is a single deployable — horizontal scale is Railway replicas behind its proxy (§16), not a rewrite; Firebase is confined to Auth + RTDB sync. *(Revision 1.1: this supersedes any earlier serverless proxy — Cloud Functions/Cloud Run are removed.)* |
 
 ---
 
