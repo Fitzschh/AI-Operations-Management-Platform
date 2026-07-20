@@ -19,15 +19,18 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 # production CORS defaults so a Railway deploy needs zero CORS configuration; override with
 # TOUCHORDERS_CORS_ORIGINS for custom domains.
 FIREBASE_PROJECT_ID = "device-streaming-ded679cd"
+# The production frontend is served from this custom domain.
+PRODUCTION_FRONTEND_ORIGINS = ("https://touch-menu-web.online",)
 FIREBASE_HOSTING_ORIGINS = (
     f"https://{FIREBASE_PROJECT_ID}.web.app",
     f"https://{FIREBASE_PROJECT_ID}.firebaseapp.com",
 )
 # Local Vite dev server, so a developer can call the deployed backend during development.
 DEVELOPMENT_ORIGINS = ("http://localhost:5173",)
-# Default allow-list applied when TOUCHORDERS_CORS_ORIGINS is unset: production Firebase Hosting
-# origins plus the local dev origin. An explicit TOUCHORDERS_CORS_ORIGINS still overrides entirely.
-DEFAULT_ALLOWED_ORIGINS = FIREBASE_HOSTING_ORIGINS + DEVELOPMENT_ORIGINS
+# Default allow-list applied when TOUCHORDERS_CORS_ORIGINS is unset: the production custom domain,
+# the Firebase Hosting origins, and the local dev origin. An explicit TOUCHORDERS_CORS_ORIGINS
+# still overrides entirely.
+DEFAULT_ALLOWED_ORIGINS = PRODUCTION_FRONTEND_ORIGINS + FIREBASE_HOSTING_ORIGINS + DEVELOPMENT_ORIGINS
 
 
 def _detect_environment() -> str:
