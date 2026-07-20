@@ -1,5 +1,4 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider, getToken } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
@@ -17,34 +16,16 @@ export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 export const database = getDatabase(firebaseApp);
 
-let appCheckInstance = null;
-try {
-  const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
-  if (siteKey) {
-    appCheckInstance = initializeAppCheck(firebaseApp, {
-      provider: new ReCaptchaV3Provider(siteKey),
-      isTokenAutoRefreshEnabled: true,
-    });
-  }
-} catch (err) {
-  console.warn('App Check init failed:', err);
-}
+// App Check was intentionally removed: it is enforced nowhere (the FastAPI backend verifies only
+// Firebase ID tokens, and RTDB access is gated by Security Rules on the authenticated UID), and its
+// site key was Google's public reCAPTCHA test key, which only produced 400 errors. Authentication
+// still relies on the Firebase ID token attached below.
 
 const databaseURL = firebaseConfig.databaseURL;
 
+// Kept its name for existing callers; it now attaches only the signed-in user's Firebase ID token.
 export async function fetchWithAppCheck(url, options = {}) {
-  // 1. Get App Check Token
-  let appCheckToken = null;
-  if (appCheckInstance) {
-    try {
-      const tokenResult = await getToken(appCheckInstance);
-      if (tokenResult?.token) appCheckToken = tokenResult.token;
-    } catch (e) {
-      console.warn('App Check token failed:', e);
-    }
-  }
-
-  // 2. Get Auth Token
+  // Get the auth token
   let authToken = null;
   try {
     if (auth.currentUser) {
@@ -56,9 +37,8 @@ export async function fetchWithAppCheck(url, options = {}) {
   }
 
   const headers = new Headers(options.headers || {});
-  if (appCheckToken) headers.set('X-Firebase-AppCheck', appCheckToken);
 
-  // 3. Attach the auth token. Firebase RTDB REST requires it as the ?auth= query param; every
+  // Attach the auth token. Firebase RTDB REST requires it as the ?auth= query param; every
   // other backend (the FastAPI BFF) gets it as an Authorization header instead, so the token
   // never appears in URLs, access logs, or proxy logs.
   let finalUrl = url;

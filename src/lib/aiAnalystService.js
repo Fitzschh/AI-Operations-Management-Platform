@@ -26,8 +26,8 @@ async function requestAnalysis(analyticsData, mode, branchId) {
   const systemPrompt = buildSystemPrompt(mode);
   const dataPrompt = buildDataPrompt(analyticsData, mode);
 
-  // fetchWithAppCheck attaches the Firebase App Check token and the signed-in user's ID token,
-  // which the server proxy verifies before it forwards to OpenAI with the server-held key.
+  // fetchWithAppCheck attaches the signed-in user's Firebase ID token, which FastAPI verifies
+  // before it forwards to OpenAI with the server-held key.
   const response = await fetchWithAppCheck(endpoint, {
     method: 'POST',
     headers: {
