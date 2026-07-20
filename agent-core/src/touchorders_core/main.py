@@ -41,6 +41,12 @@ def build_app(settings: Settings | None = None):
                 "Set them in Railway Variables or the local .env file."
             )
 
+    if settings.environment in ("production", "staging") and settings.database_url.startswith("sqlite"):
+        logger.warning(
+            "sqlite_in_production",
+            detail="DATABASE_URL is SQLite on ephemeral storage; ledger/audit data is lost on redeploy. Attach Railway PostgreSQL (${{Postgres.DATABASE_URL}}) for durability.",
+        )
+
     gateway = None
     db_ping = None
     if openai_key:
@@ -66,6 +72,8 @@ def build_app(settings: Settings | None = None):
     verifier = None
     try:
         credential = settings.firebase_service_account_json.get_secret_value() if settings.firebase_service_account_json else None
+        if credential is None and settings.firebase_credentials_path and settings.firebase_credentials_path.exists():
+            credential = settings.firebase_credentials_path.read_text(encoding="utf-8")  # local dev only
         verifier = FirebaseIdentityVerifier(credential)
     except Exception as exc:  # noqa: BLE001 - firebase-admin/cred absent -> auth-gated routes 503
         logger.warning("firebase_verifier_unconfigured", error=str(exc))

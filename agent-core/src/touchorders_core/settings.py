@@ -8,12 +8,39 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, Field, SecretStr, ValidationError
+from pydantic import AliasChoices, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+
+# The Firebase project this repository deploys with (.firebaserc). Used only to derive safe
+# production CORS defaults so a Railway deploy needs zero CORS configuration; override with
+# TOUCHORDERS_CORS_ORIGINS for custom domains.
+FIREBASE_PROJECT_ID = "device-streaming-ded679cd"
+FIREBASE_HOSTING_ORIGINS = (
+    f"https://{FIREBASE_PROJECT_ID}.web.app",
+    f"https://{FIREBASE_PROJECT_ID}.firebaseapp.com",
+)
+
+
+def _detect_environment() -> str:
+    """Default the environment from Railway's injected metadata when unset.
+
+    Railway injects RAILWAY_ENVIRONMENT_NAME (and legacy RAILWAY_ENVIRONMENT) into every deploy,
+    so TOUCHORDERS_ENVIRONMENT never needs to be set manually there. Any unrecognized Railway
+    environment name is treated as production — the fail-safe direction (strict validation on).
+    Outside Railway the default remains development.
+    """
+
+    railway_name = os.environ.get("RAILWAY_ENVIRONMENT_NAME") or os.environ.get("RAILWAY_ENVIRONMENT")
+    if railway_name:
+        normalized = railway_name.strip().lower()
+        return normalized if normalized in {"development", "test", "staging", "production"} else "production"
+    if os.environ.get("RAILWAY_PROJECT_ID"):
+        return "production"
+    return "development"
 
 
 class SettingsConfigurationError(RuntimeError):
@@ -76,7 +103,7 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["development", "test", "staging", "production"] = Field(
-        default="development",
+        default_factory=_detect_environment,
         validation_alias=AliasChoices("TOUCHORDERS_ENVIRONMENT", "ENVIRONMENT"),
     )
     service_name: str = Field(default="touchorders-agent-core")
@@ -132,6 +159,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TOUCHORDERS_CORS_ORIGINS", "CORS_ORIGINS"),
         description="Comma-separated allowed origins for the Firebase Hosting frontend / tablet; '*' in dev.",
     )
+
+    @model_validator(mode="after")
+    def default_production_cors_to_hosting_origins(self) -> "Settings":
+        """In production/staging, an unset ('*') CORS policy tightens to this project's Firebase
+        Hosting origins automatically — no manual Railway variable needed. Explicit values and
+        development wildcard behavior are untouched."""
+
+        if self.environment in ("production", "staging") and self.cors_allow_origins.strip() in ("", "*"):
+            self.cors_allow_origins = ",".join(FIREBASE_HOSTING_ORIGINS)
+        return self
 
     @property
     def cors_origins_list(self) -> list[str]:
