@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from touchorders_core.settings import FIREBASE_HOSTING_ORIGINS, Settings, clear_settings_cache
+from touchorders_core.settings import DEFAULT_ALLOWED_ORIGINS, FIREBASE_HOSTING_ORIGINS, Settings, clear_settings_cache
 
 
 def _clear_env(monkeypatch) -> None:
@@ -35,10 +35,15 @@ def test_explicit_environment_wins_over_railway(monkeypatch) -> None:
     assert Settings().environment == "staging"
 
 
-def test_production_cors_defaults_to_firebase_hosting_origins(monkeypatch) -> None:
+def test_production_cors_defaults_to_hosting_plus_localhost(monkeypatch) -> None:
     _clear_env(monkeypatch)
     settings = Settings(environment="production")
-    assert settings.cors_origins_list == list(FIREBASE_HOSTING_ORIGINS)
+    origins = settings.cors_origins_list
+    # Production Firebase Hosting origins are preserved...
+    assert all(o in origins for o in FIREBASE_HOSTING_ORIGINS)
+    # ...and the local dev origin is allowed against the deployed backend.
+    assert "http://localhost:5173" in origins
+    assert origins == list(DEFAULT_ALLOWED_ORIGINS)
 
 
 def test_explicit_cors_override_is_respected_in_production(monkeypatch) -> None:

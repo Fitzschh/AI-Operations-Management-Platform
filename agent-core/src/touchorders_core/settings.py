@@ -23,6 +23,11 @@ FIREBASE_HOSTING_ORIGINS = (
     f"https://{FIREBASE_PROJECT_ID}.web.app",
     f"https://{FIREBASE_PROJECT_ID}.firebaseapp.com",
 )
+# Local Vite dev server, so a developer can call the deployed backend during development.
+DEVELOPMENT_ORIGINS = ("http://localhost:5173",)
+# Default allow-list applied when TOUCHORDERS_CORS_ORIGINS is unset: production Firebase Hosting
+# origins plus the local dev origin. An explicit TOUCHORDERS_CORS_ORIGINS still overrides entirely.
+DEFAULT_ALLOWED_ORIGINS = FIREBASE_HOSTING_ORIGINS + DEVELOPMENT_ORIGINS
 
 
 def _detect_environment() -> str:
@@ -141,7 +146,7 @@ class Settings(BaseSettings):
         development wildcard behavior are untouched."""
 
         if self.environment in ("production", "staging") and self.cors_allow_origins.strip() in ("", "*"):
-            self.cors_allow_origins = ",".join(FIREBASE_HOSTING_ORIGINS)
+            self.cors_allow_origins = ",".join(DEFAULT_ALLOWED_ORIGINS)
         return self
 
     @property
