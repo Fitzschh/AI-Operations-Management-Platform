@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import uvicorn
+from sqlalchemy import text
 
 from touchorders_core.api.app import create_app
 from touchorders_core.api.auth import FirebaseIdentityVerifier
@@ -41,11 +42,18 @@ def build_app(settings: Settings | None = None):
             )
 
     gateway = None
+    db_ping = None
     if openai_key:
         try:
             engine = create_database_engine(settings.database_url)
             initialize_schema(engine)  # hackathon; production runs Alembic (§12.1)
             sessions = create_session_factory(engine)
+
+            def db_ping() -> bool:
+                with engine.connect() as connection:
+                    connection.execute(text("SELECT 1"))
+                return True
+
             gateway = LLMGateway(
                 {}, OpenAIClient(), LLMCallRepository(sessions), AuditLogger(AuditRepository(sessions)),
                 budget=BudgetTracker(default_daily_budgets()),
@@ -62,7 +70,7 @@ def build_app(settings: Settings | None = None):
     except Exception as exc:  # noqa: BLE001 - firebase-admin/cred absent -> auth-gated routes 503
         logger.warning("firebase_verifier_unconfigured", error=str(exc))
 
-    return create_app(settings, gateway=gateway, identity_verifier=verifier)
+    return create_app(settings, gateway=gateway, identity_verifier=verifier, db_ping=db_ping)
 
 
 app = build_app()

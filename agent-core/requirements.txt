@@ -1,0 +1,4 @@
+# Railway/Railpack build entrypoint. Installing "." builds the touchorders-agent-core package,
+# resolving all runtime dependencies from pyproject.toml (the single source of truth) and making
+# `touchorders_core` importable for the uvicorn start command in railway.toml.
+.
