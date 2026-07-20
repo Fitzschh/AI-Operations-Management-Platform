@@ -12,11 +12,9 @@ dependencies = [
   "fastapi>=0.115,<1",
   "firebase-admin>=6.5,<7",
   "openai>=1.0,<3",
-  "psycopg2-binary>=2.9,<3",
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
   "PyYAML>=6.0,<7",
-  "SQLAlchemy>=2.0,<3",
   "structlog>=24.4,<26",
   "uvicorn[standard]>=0.30,<1",
 ]
@@ -50,17 +48,10 @@ name = "Domain stays pure"
 type = "forbidden"
 source_modules = ["touchorders_core.domain"]
 forbidden_modules = [
-  "touchorders_core.datastore",
   "touchorders_core.llm",
   "touchorders_core.api",
   "touchorders_core.observability",
 ]
-
-[[tool.importlinter.contracts]]
-name = "Datastore does not depend on the AI or API layers"
-type = "forbidden"
-source_modules = ["touchorders_core.datastore"]
-forbidden_modules = ["touchorders_core.llm", "touchorders_core.api"]
 
 [[tool.importlinter.contracts]]
 name = "LLM subsystem is isolated from the API layer"

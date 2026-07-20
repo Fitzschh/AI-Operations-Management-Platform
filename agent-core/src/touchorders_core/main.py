@@ -1,25 +1,26 @@
-"""Composition root for the TouchOrders Agent Core process (FastAPI on Railway)."""
+"""Composition root for the TouchOrders AI gateway (FastAPI on Railway).
+
+The process is deliberately stateless: no database, no persistence. Firebase Realtime Database is
+the sole operational datastore; token/cost accounting is available on OpenAI's platform usage
+dashboard; budgets and the circuit breaker are in-memory per process.
+"""
 
 from __future__ import annotations
 
 import os
 
 import uvicorn
-from sqlalchemy import text
 
 from touchorders_core.api.app import create_app
 from touchorders_core.api.auth import FirebaseIdentityVerifier
-from touchorders_core.datastore.engine import create_database_engine, create_session_factory, initialize_schema
-from touchorders_core.datastore.repositories import AuditRepository, LLMCallRepository
 from touchorders_core.llm.budget import BudgetTracker
 from touchorders_core.llm.gateway import LLMGateway, OpenAIClient, default_daily_budgets
-from touchorders_core.observability.audit import AuditLogger
 from touchorders_core.observability.logging import configure_logging, get_logger
 from touchorders_core.settings import Settings, get_settings
 
 
 def build_app(settings: Settings | None = None):
-    """Wire the production BFF: real LLM Gateway + Firebase verifier when their credentials are
+    """Wire the AI gateway: real LLM client + Firebase verifier when their credentials are
     present (Railway env), otherwise a healthy app whose AI routes return 503 until configured."""
 
     settings = settings or get_settings()
@@ -30,40 +31,18 @@ def build_app(settings: Settings | None = None):
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
 
     if settings.environment in ("production", "staging"):
-        missing = []
         if not openai_key:
-            missing.append("OPENAI_API_KEY")
+            raise RuntimeError(
+                f"Required environment variable missing for {settings.environment}: OPENAI_API_KEY. "
+                "Set it in Railway Variables or the local .env file."
+            )
         if not settings.cors_allow_origins or settings.cors_allow_origins == "*":
             logger.warning("cors_origins_wildcard", detail="TOUCHORDERS_CORS_ORIGINS is '*'; restrict to exact origins in production")
-        if missing:
-            raise RuntimeError(
-                f"Required environment variable(s) missing for {settings.environment}: {', '.join(missing)}. "
-                "Set them in Railway Variables or the local .env file."
-            )
-
-    if settings.environment in ("production", "staging") and settings.database_url.startswith("sqlite"):
-        logger.warning(
-            "sqlite_in_production",
-            detail="DATABASE_URL is SQLite on ephemeral storage; ledger/audit data is lost on redeploy. Attach Railway PostgreSQL (${{Postgres.DATABASE_URL}}) for durability.",
-        )
 
     gateway = None
-    db_ping = None
     if openai_key:
         try:
-            engine = create_database_engine(settings.database_url)
-            initialize_schema(engine)  # hackathon; production runs Alembic (§12.1)
-            sessions = create_session_factory(engine)
-
-            def db_ping() -> bool:
-                with engine.connect() as connection:
-                    connection.execute(text("SELECT 1"))
-                return True
-
-            gateway = LLMGateway(
-                {}, OpenAIClient(), LLMCallRepository(sessions), AuditLogger(AuditRepository(sessions)),
-                budget=BudgetTracker(default_daily_budgets()),
-            )
+            gateway = LLMGateway({}, OpenAIClient(), budget=BudgetTracker(default_daily_budgets()))
         except Exception as exc:  # noqa: BLE001 - degrade to AI-disabled rather than crash boot
             logger.warning("llm_gateway_unconfigured", error=str(exc))
     else:
@@ -78,7 +57,7 @@ def build_app(settings: Settings | None = None):
     except Exception as exc:  # noqa: BLE001 - firebase-admin/cred absent -> auth-gated routes 503
         logger.warning("firebase_verifier_unconfigured", error=str(exc))
 
-    return create_app(settings, gateway=gateway, identity_verifier=verifier, db_ping=db_ping)
+    return create_app(settings, gateway=gateway, identity_verifier=verifier)
 
 
 app = build_app()

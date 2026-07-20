@@ -11,14 +11,15 @@ The system is two deployables plus managed Firebase services:
 Only **two secrets** are ever entered anywhere: `OPENAI_API_KEY` and
 `FIREBASE_SERVICE_ACCOUNT_JSON`, both in Railway Variables. Everything else is automatic
 (environment autodetects from Railway metadata; CORS auto-tightens to this project's Firebase
-Hosting origins; the port comes from Railway; the DB defaults to SQLite until you attach Postgres).
+Hosting origins; the port comes from Railway). The backend is stateless — no database service,
+no add-ons: Firebase Realtime Database is the only datastore.
 
 ---
 
 ## Step 1 — Create the Railway project
 
 1. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → select this repository.
-2. *(Recommended)* In the project canvas: **+ New** → **Database** → **PostgreSQL**.
+   (No database service is needed — the backend is stateless.)
 
 ## Step 2 — Set the Root Directory
 
@@ -47,7 +48,6 @@ Service → **Variables**:
 |---|---|
 | `OPENAI_API_KEY` | (Step 5) |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Paste the **entire contents** of the JSON file from Step 3 (one value, newlines fine) |
-| `DATABASE_URL` | *(recommended)* `${{Postgres.DATABASE_URL}}` |
 
 Nothing else is required. (`TOUCHORDERS_ENVIRONMENT`, `TOUCHORDERS_CORS_ORIGINS`, `PORT` are
 automatic; see `agent-core/docs/deployment/railway-secrets.md` for optional overrides.)
@@ -69,7 +69,7 @@ the boot **on purpose** (fail-fast guard), so add variables before deploying.
 
 ```
 curl https://<service>.up.railway.app/health         # {"status":"ok",...}
-curl https://<service>.up.railway.app/health/ready   # {"status":"healthy","database":"ok","firebase":"ok","openai":"ok"}
+curl https://<service>.up.railway.app/health/ready   # {"status":"healthy","firebase":"ok","openai":"ok"}
 ```
 `degraded` readiness names exactly which dependency is unconfigured. An unauthenticated
 `POST /api/ai/chat/completions` must return **401** — that's the Firebase auth gate working.

@@ -51,7 +51,6 @@ cites the exact call site.
 | Variable | Required now? | Classification | Used by | Production value / rule |
 |---|---|---|---|---|
 | `OPENAI_API_KEY` | **Yes** | secret | `llm/gateway.py` `OpenAIClient.__init__` (sole reader) | Dedicated OpenAI production Project key. Service scope only. |
-| `DATABASE_URL` | Recommended | secret | `main.py` → `datastore/engine.py` | Reference the Railway PostgreSQL service: `${{Postgres.DATABASE_URL}}`. Unset, the app boots on SQLite with a loud `sqlite_in_production` warning — functional for a demo, but the ledger/audit data dies on every redeploy. |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | **Yes** | secret | `api/auth.py` `FirebaseIdentityVerifier` — verifies the Firebase ID token on every `POST /api/ai/chat/completions` call | Without it, the sole API route permanently 503s (no ambient Google credentials exist on Railway) — this is the only auth gate keeping the OpenAI-backed endpoint from being an open, unauthenticated relay. Least-privileged service account. |
 | `TOUCHORDERS_ENVIRONMENT` | No — autodetected | configuration | `settings.py` `_detect_environment` → `main.py` fail-fast gate | Autodetected from Railway's injected `RAILWAY_ENVIRONMENT_NAME` (unknown names are treated as `production`, the fail-safe direction). Set only to override. |
 | `TOUCHORDERS_CORS_ORIGINS` | No — auto-defaulted | configuration | `settings.py` production validator → `api/app.py` `CORSMiddleware` | In production/staging an unset value tightens automatically to this project's Firebase Hosting origins (`https://device-streaming-ded679cd.web.app`, `.firebaseapp.com`). Set only for custom domains. |
@@ -63,8 +62,9 @@ deployment-time variable is the non-secret `VITE_API_BASE_URL` — the Railway b
 set in the build environment before `npm run build && firebase deploy --only hosting`.
 
 Keep variables service-scoped rather than project-shared unless a second trusted backend
-service demonstrably needs the same value. Railway reference variables are appropriate for the
-PostgreSQL connection string; do not copy it manually.
+service demonstrably needs the same value. The service is stateless: it needs no database and no
+Railway add-ons — Firebase Realtime Database remains the only operational datastore, and token
+usage is visible on OpenAI's platform dashboard.
 
 ## Deployment configuration
 
@@ -100,9 +100,7 @@ deploy them deliberately instead of treating a saved value as already active.
 - `llm.gateway` must create one SDK client at application composition and must never log
   headers, environment dumps, request objects, or raw exception payloads that could contain a
   credential.
-- API routes, agents, tools, workflows, and the dashboard must receive only gateway results,
-  never a provider key.
-- Secret-bearing settings must be excluded from `/health`, OpenAPI, audit records, metrics,
-  and structured logs.
-- Production deployment requires a real PostgreSQL service. The local SQLite URL is only the
-  single-node hackathon default and must not be backed by Railway's ephemeral filesystem.
+- API routes and the dashboard must receive only gateway results, never a provider key.
+- Secret-bearing settings must be excluded from `/health`, OpenAPI, metrics, and structured logs.
+- The service persists nothing: no database service is required or permitted. Firebase Realtime
+  Database is the sole operational datastore.

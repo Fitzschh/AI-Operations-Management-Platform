@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -29,7 +27,6 @@ class ReadinessResponse(BaseModel):
     """Dependency status for deploy verification; /health remains pure liveness."""
 
     status: str
-    database: str
     firebase: str
     openai: str
 
@@ -39,7 +36,6 @@ def create_app(
     *,
     gateway: LLMGateway | None = None,
     identity_verifier: IdentityVerifier | None = None,
-    db_ping: Callable[[], bool] | None = None,
 ) -> FastAPI:
     """Create the BFF application.
 
@@ -82,23 +78,15 @@ def create_app(
 
     @app.get("/health/ready", response_model=ReadinessResponse, tags=["health"])
     async def readiness() -> ReadinessResponse:
-        """Report dependency wiring. 'ok' = wired (and, for the DB, answering a ping);
-        'unconfigured' = credentials absent; 'error' = wired but failing. Statuses reflect
-        composition, never secret values."""
+        """Report dependency wiring: 'ok' = wired, 'unconfigured' = credentials absent.
+        Statuses reflect composition, never secret values. There is deliberately no database
+        status — this service persists nothing."""
 
-        if db_ping is None:
-            database = "unconfigured"
-        else:
-            try:
-                database = "ok" if db_ping() else "error"
-            except Exception:  # noqa: BLE001 - readiness must never raise
-                database = "error"
         firebase = "ok" if identity_verifier is not None else "unconfigured"
         openai_status = "ok" if gateway is not None else "unconfigured"
-        healthy = database == "ok" and firebase == "ok" and openai_status == "ok"
+        healthy = firebase == "ok" and openai_status == "ok"
         return ReadinessResponse(
             status="healthy" if healthy else "degraded",
-            database=database,
             firebase=firebase,
             openai=openai_status,
         )

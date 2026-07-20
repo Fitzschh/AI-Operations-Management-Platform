@@ -107,10 +107,6 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TOUCHORDERS_ENVIRONMENT", "ENVIRONMENT"),
     )
     service_name: str = Field(default="touchorders-agent-core")
-    database_url: str = Field(
-        default="sqlite:///./touchorders.db",
-        validation_alias=AliasChoices("DB_URL", "TOUCHORDERS_DATABASE_URL"),
-    )
     log_level: str = Field(
         default="INFO",
         validation_alias=AliasChoices("TOUCHORDERS_LOG_LEVEL", "LOG_LEVEL"),

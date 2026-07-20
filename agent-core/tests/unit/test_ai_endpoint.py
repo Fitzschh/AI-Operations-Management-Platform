@@ -1,15 +1,13 @@
-"""§13.4 BFF AI endpoint: authenticated, routed through the gateway, OpenAI-shaped response."""
+"""BFF AI endpoint: authenticated, routed through the gateway, OpenAI-shaped response."""
 
 from __future__ import annotations
 
 import json
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from touchorders_core.api.app import create_app
 from touchorders_core.api.auth import FakeIdentityVerifier
-from touchorders_core.datastore.orm import LLMCallRow
 from touchorders_core.domain.enums import AgentName
 from touchorders_core.llm.budget import BudgetTracker, DailyBudget
 from touchorders_core.llm.gateway import FakeLLMClient, LLMGateway
@@ -26,11 +24,11 @@ def _settings() -> Settings:
     return Settings(environment="test", log_json=False)
 
 
-def _gateway(repos) -> LLMGateway:
+def _gateway() -> LLMGateway:
     client = FakeLLMClient()
     client.register("dashboard_analysis", _ANALYSIS, input_tokens=1200, output_tokens=280)
     budget = BudgetTracker({AgentName.BUSINESS_ANALYST: DailyBudget(input=100_000, output=100_000)})
-    return LLMGateway({}, client, repos.llm_calls, repos.audit, budget=budget)
+    return LLMGateway({}, client, budget=budget)
 
 
 def _body() -> dict:
@@ -46,8 +44,8 @@ def _body() -> dict:
     }
 
 
-def test_authenticated_request_returns_dashboard_analysis(repos) -> None:
-    app = create_app(_settings(), gateway=_gateway(repos), identity_verifier=FakeIdentityVerifier())
+def test_authenticated_request_returns_dashboard_analysis() -> None:
+    app = create_app(_settings(), gateway=_gateway(), identity_verifier=FakeIdentityVerifier())
     with TestClient(app) as client:
         response = client.post("/api/ai/chat/completions?auth=test-id-token", json=_body())
 
@@ -56,15 +54,15 @@ def test_authenticated_request_returns_dashboard_analysis(repos) -> None:
     assert json.loads(content)["greeting"].startswith("Evening service")
 
 
-def test_missing_token_is_unauthorized(repos) -> None:
-    app = create_app(_settings(), gateway=_gateway(repos), identity_verifier=FakeIdentityVerifier())
+def test_missing_token_is_unauthorized() -> None:
+    app = create_app(_settings(), gateway=_gateway(), identity_verifier=FakeIdentityVerifier())
     with TestClient(app) as client:
         response = client.post("/api/ai/chat/completions", json=_body())
     assert response.status_code == 401
 
 
-def test_forged_token_is_unauthorized(repos) -> None:
-    app = create_app(_settings(), gateway=_gateway(repos), identity_verifier=FakeIdentityVerifier())
+def test_forged_token_is_unauthorized() -> None:
+    app = create_app(_settings(), gateway=_gateway(), identity_verifier=FakeIdentityVerifier())
     with TestClient(app) as client:
         response = client.post("/api/ai/chat/completions?auth=forged-token", json=_body())
     assert response.status_code == 401
@@ -76,14 +74,3 @@ def test_returns_503_when_ai_backend_not_configured() -> None:
     with TestClient(app) as client:
         response = client.post("/api/ai/chat/completions?auth=test-id-token", json=_body())
     assert response.status_code == 503
-
-
-def test_call_is_accounted_in_the_ledger(repos) -> None:
-    app = create_app(_settings(), gateway=_gateway(repos), identity_verifier=FakeIdentityVerifier())
-    with TestClient(app) as client:
-        client.post("/api/ai/chat/completions?auth=test-id-token", json=_body())
-
-    with repos.factory() as session:
-        rows = list(session.scalars(select(LLMCallRow)).all())
-    assert len(rows) == 1
-    assert rows[0].purpose == "dashboard_analysis" and rows[0].outcome == "SUCCESS" and rows[0].input_tokens == 1200

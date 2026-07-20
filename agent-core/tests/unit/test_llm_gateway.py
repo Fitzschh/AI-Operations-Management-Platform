@@ -1,12 +1,14 @@
-"""§14 LLM Gateway: structured outputs, cache, numeric-echo (A-4), budget, circuit breaker."""
+"""LLM Gateway behavior: structured outputs, cache, numeric echo, budget, circuit breaker.
+
+The gateway is stateless — no persistence is involved; accounting lives on OpenAI's usage
+dashboard and the in-process metrics counters.
+"""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import Field
-from sqlalchemy import select
 
-from touchorders_core.datastore.orm import LLMCallRow
 from touchorders_core.domain.common import DomainModel
 from touchorders_core.domain.enums import AgentName
 from touchorders_core.llm.budget import BudgetExceeded, BudgetTracker, DailyBudget, LLMUnavailable
@@ -46,66 +48,57 @@ def _analysis(value: float = 14.0) -> dict:
     }
 
 
-def _gateway(repos, client, *, budget=None, cache=None) -> LLMGateway:
-    return LLMGateway(_config(), client, repos.llm_calls, repos.audit, cache=cache or ResponseCache(), budget=budget or BudgetTracker(_generous()))
+def _gateway(client, *, budget=None, cache=None) -> LLMGateway:
+    return LLMGateway(_config(), client, cache=cache or ResponseCache(), budget=budget or BudgetTracker(_generous()))
 
 
 def _generous():
     return {AGENT: DailyBudget(input=1_000_000, output=1_000_000)}
 
 
-def _ledger_rows(repos) -> list[LLMCallRow]:
-    with repos.factory() as session:
-        return list(session.scalars(select(LLMCallRow)).all())
-
-
-def test_structured_call_returns_validated_output_and_writes_ledger(repos) -> None:
+def test_structured_call_returns_validated_output() -> None:
     client = FakeLLMClient()
     client.register("realtime_incident", _analysis(), input_tokens=1600, output_tokens=450)
-    result = _gateway(repos, client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
+    result = _gateway(client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
 
     assert isinstance(result.output, AnalysisOutput)
     assert result.output.evidence[0].value == 14.0
-    rows = _ledger_rows(repos)
-    assert len(rows) == 1 and rows[0].outcome == "SUCCESS" and rows[0].input_tokens == 1600
+    assert result.input_tokens == 1600 and result.output_tokens == 450
 
 
-def test_identical_bundle_is_served_from_cache_for_zero_tokens(repos) -> None:
+def test_identical_bundle_is_served_from_cache_for_zero_tokens() -> None:
     client = FakeLLMClient()
     client.register("realtime_incident", _analysis())
-    gateway = _gateway(repos, client)
+    gateway = _gateway(client)
 
     first = gateway.structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
     second = gateway.structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
 
     assert first.cached is False and second.cached is True
     assert second.input_tokens == 0 and second.output_tokens == 0
-    outcomes = sorted(r.outcome for r in _ledger_rows(repos))
-    assert outcomes == ["CACHE_HIT", "SUCCESS"]
 
 
-def test_numeric_echo_violation_is_rejected(repos) -> None:
+def test_numeric_echo_violation_is_rejected() -> None:
     client = FakeLLMClient()
     client.register("realtime_incident", _analysis(value=999.0))  # 999 is not in the bundle
     with pytest.raises(OutputRejected):
-        _gateway(repos, client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
-    assert _ledger_rows(repos)[0].outcome == "REJECTED"
+        _gateway(client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
 
 
-def test_corrective_reprompt_recovers_a_bad_first_response(repos) -> None:
+def test_corrective_reprompt_recovers_a_bad_first_response() -> None:
     client = FakeLLMClient()
     client.register("realtime_incident", _analysis(value=999.0))  # first: bad echo
     client.register("realtime_incident", _analysis(value=14.0))   # re-prompt: corrected
-    result = _gateway(repos, client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
+    result = _gateway(client).structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(), output_schema=AnalysisOutput)
     assert result.output.evidence[0].value == 14.0
 
 
-def test_budget_exhaustion_raises_before_calling_the_model(repos) -> None:
+def test_budget_exhaustion_raises_before_calling_the_model() -> None:
     client = FakeLLMClient()
     # Echo the constant threshold (20.0) so varying the bundle to defeat the cache keeps echo valid.
     client.register("realtime_incident", _analysis(value=20.0), input_tokens=1000, output_tokens=300)
     budget = BudgetTracker({AGENT: DailyBudget(input=1500, output=400)})
-    gateway = _gateway(repos, client, budget=budget)
+    gateway = _gateway(client, budget=budget)
 
     gateway.structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(1.0), output_schema=AnalysisOutput)
     gateway.structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(2.0), output_schema=AnalysisOutput)
@@ -113,13 +106,13 @@ def test_budget_exhaustion_raises_before_calling_the_model(repos) -> None:
         gateway.structured_call(agent=AGENT, purpose="realtime_incident", bundle=_bundle(3.0), output_schema=AnalysisOutput)
 
 
-def test_circuit_breaker_opens_after_consecutive_transport_failures(repos) -> None:
+def test_circuit_breaker_opens_after_consecutive_transport_failures() -> None:
     class _Failing:
         def complete(self, **_):
             raise RuntimeError("provider 503")
 
     budget = BudgetTracker(_generous(), failure_threshold=3, cooldown_seconds=999)
-    gateway = _gateway(repos, _Failing(), budget=budget)
+    gateway = _gateway(_Failing(), budget=budget)
 
     for nonce in range(3):
         with pytest.raises(RuntimeError):

@@ -2,31 +2,35 @@
 
 This is the only module permitted to import the OpenAI SDK, and it never exposes a free-form
 completion path (§14.5) — every call is a strict Structured Output against a Pydantic schema, with
-budget gating, response caching, numeric-echo validation (A-4), a per-agent circuit breaker, and a
-cost-ledger write. ``FakeLLMClient`` provides canned structured outputs so the whole system is
-testable and demoable without a network or an API key.
+budget gating, response caching, numeric-echo validation (A-4), and a per-agent circuit breaker.
+Token/cost accounting is observable via OpenAI's own platform usage dashboard and the in-process
+metrics counters; the backend deliberately persists nothing. ``FakeLLMClient`` provides canned
+structured outputs so the whole system is testable and demoable without a network or an API key.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
-from touchorders_core.datastore.repositories import LLMCallRepository
 from touchorders_core.domain.enums import AgentName
 from touchorders_core.llm.budget import BudgetStatus, BudgetTracker, DailyBudget
 from touchorders_core.llm.cache import ResponseCache
 from touchorders_core.llm.structured import strict_response_format
-from touchorders_core.observability.audit import AuditLogger, canonical_json
 from touchorders_core.observability.metrics import MetricsRegistry, get_metrics
 
 ReadToolRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def canonical_json(payload: dict[str, Any]) -> str:
+    """Deterministic JSON used for request hashing and prompt assembly."""
+
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 class NumericEchoViolation(RuntimeError):
@@ -139,8 +143,6 @@ class LLMGateway:
         self,
         config: dict[AgentName, AgentCallConfig],
         client: LLMClient,
-        ledger: LLMCallRepository,
-        audit: AuditLogger,
         *,
         cache: ResponseCache | None = None,
         budget: BudgetTracker | None = None,
@@ -148,8 +150,6 @@ class LLMGateway:
     ) -> None:
         self._config = config
         self._client = client
-        self._ledger = ledger
-        self._audit = audit
         self._cache = cache if cache is not None else ResponseCache()
         self._budget = budget if budget is not None else BudgetTracker({})
         self._metrics = metrics or get_metrics()
@@ -169,19 +169,17 @@ class LLMGateway:
         temperature: float,
         correlation_id: str | None = None,
     ) -> tuple[dict[str, Any], int, int]:
-        """Accounted JSON-object completion for the dashboard BFF (§13.4).
+        """JSON-object completion for the dashboard BFF (§13.4).
 
         Distinct from ``structured_call`` (strict json_schema for the agents), this returns the
-        free-form JSON object the dashboard renders. It is NOT an unaccounted escape hatch: it goes
-        through the same budget gate, circuit breaker, single OpenAI client, and cost ledger, and
-        the prompts stay server-side. Returns (content, input_tokens, output_tokens).
+        free-form JSON object the dashboard renders. It goes through the same budget gate, circuit
+        breaker, and single OpenAI client. Returns (content, input_tokens, output_tokens).
         """
         self._budget.ensure_available(agent)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt, "purpose": purpose},
         ]
-        started = time.perf_counter()
         try:
             response = self._client.complete(
                 model=model, messages=messages, response_format={"type": "json_object"},
@@ -189,13 +187,11 @@ class LLMGateway:
             )
         except Exception:
             self._budget.record_failure(agent)
-            self._ledger.add(agent=agent.value, purpose=purpose, model=model, input_tokens=0, cached_input_tokens=0, output_tokens=0, latency_ms=int((time.perf_counter() - started) * 1000), outcome="ERROR", request_hash="", prompt_version="bff", correlation_id=correlation_id)
             self._metrics.increment("llm_calls_total", agent=agent.value, outcome="error")
             raise
         content = response.content or {}
         self._budget.record_usage(agent, input_tokens=response.input_tokens, output_tokens=response.output_tokens)
         self._budget.record_success(agent)
-        self._ledger.add(agent=agent.value, purpose=purpose, model=model, input_tokens=response.input_tokens, cached_input_tokens=response.cached_input_tokens, output_tokens=response.output_tokens, latency_ms=int((time.perf_counter() - started) * 1000), outcome="SUCCESS", request_hash="", prompt_version="bff", correlation_id=correlation_id)
         self._metrics.increment("llm_calls_total", agent=agent.value, outcome="success")
         return content, response.input_tokens, response.output_tokens
 
@@ -220,34 +216,27 @@ class LLMGateway:
         cached = self._cache.get(request_hash)
         if cached is not None:
             self._metrics.increment("llm_calls_total", agent=agent.value, outcome="cache_hit")
-            self._ledger.add(agent=agent.value, purpose=purpose, model=config.model, input_tokens=0, cached_input_tokens=0, output_tokens=0, latency_ms=0, outcome="CACHE_HIT", request_hash=request_hash, prompt_version=config.prompt_version, correlation_id=correlation_id)
             return GatewayResult(output=output_schema.model_validate(cached), cached=True, input_tokens=0, output_tokens=0, request_hash=request_hash)
 
         allowed_numbers = _collect_numbers(bundle)
         response_format = strict_response_format(output_schema)
         messages = self._assemble(config, bundle, purpose)
 
-        started = time.perf_counter()
         try:
             content, in_tokens, out_tokens = self._run(agent, config, messages, response_format, read_tool_specs or [], read_tool_runner, output_schema, allowed_numbers, echo_keys, purpose)
         except OutputRejected:
             self._budget.record_success(agent)  # a rejected output is not a transport failure
-            self._ledger.add(agent=agent.value, purpose=purpose, model=config.model, input_tokens=0, cached_input_tokens=0, output_tokens=0, latency_ms=int((time.perf_counter() - started) * 1000), outcome="REJECTED", request_hash=request_hash, prompt_version=config.prompt_version, correlation_id=correlation_id)
-            self._audit.write(actor=f"agent:{agent.value}", action="agent.output_rejected", entity_type="agent", entity_id=agent.value, correlation_id=correlation_id, payload={"purpose": purpose})
             self._metrics.increment("llm_calls_total", agent=agent.value, outcome="rejected")
             raise
         except Exception:  # transport failure -> count toward the breaker, then propagate
             self._budget.record_failure(agent)
-            self._ledger.add(agent=agent.value, purpose=purpose, model=config.model, input_tokens=0, cached_input_tokens=0, output_tokens=0, latency_ms=int((time.perf_counter() - started) * 1000), outcome="ERROR", request_hash=request_hash, prompt_version=config.prompt_version, correlation_id=correlation_id)
             self._metrics.increment("llm_calls_total", agent=agent.value, outcome="error")
             raise
 
-        latency_ms = int((time.perf_counter() - started) * 1000)
         output = output_schema.model_validate(content)
 
         self._budget.record_usage(agent, input_tokens=in_tokens, output_tokens=out_tokens)
         self._budget.record_success(agent)
-        self._ledger.add(agent=agent.value, purpose=purpose, model=config.model, input_tokens=in_tokens, cached_input_tokens=0, output_tokens=out_tokens, latency_ms=latency_ms, outcome="SUCCESS", request_hash=request_hash, prompt_version=config.prompt_version, correlation_id=correlation_id)
         self._cache.put(request_hash, content, agent)
         self._metrics.increment("llm_calls_total", agent=agent.value, outcome="success")
         self._metrics.increment("llm_tokens_total", value=in_tokens, agent=agent.value, direction="input")
