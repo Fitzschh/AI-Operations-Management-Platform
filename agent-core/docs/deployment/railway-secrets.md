@@ -45,18 +45,21 @@ Create variables in Railway for the **agent-core service**, separately in each R
 environment. The values below are names and safe examples only; secret values belong in the
 Railway Variables UI or CLI, never in this repository.
 
-| Variable | Classification | Production value / rule |
-|---|---|---|
-| `OPENAI_API_KEY` | secret | Dedicated OpenAI production Project service-account key. Service scope only. |
-| `DATABASE_URL` | secret | Reference the Railway PostgreSQL service: `${{Postgres.DATABASE_URL}}`. |
-| `AUTH_API_KEY_PEPPER` | secret | Fresh random value (at least 32 bytes); used only for keyed hashing in Stage 10. |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | secret | Full service-account JSON, scoped to the minimum Firebase paths; implemented in Stage 2. |
-| `FIREBASE_DATABASE_URL` | sensitive configuration | RTDB URL; service scope only. |
-| `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | configuration | Firebase token validation values; do not put them in the frontend unless intentionally public. |
-| `TOUCHORDERS_ENVIRONMENT` | configuration | `production` |
-| `TOUCHORDERS_CORS_ORIGINS` | configuration | Exact Firebase Hosting origins, comma-separated (e.g. `https://<project>.web.app,https://<project>.firebaseapp.com`). Never `*` in production. |
-| `TOUCHORDERS_LOG_LEVEL` | configuration | `INFO` |
-| `TOUCHORDERS_LOG_JSON` | configuration | `true` |
+Classification below is audited against the current implementation, not aspirational — "used by"
+cites the exact call site.
+
+| Variable | Required now? | Classification | Used by | Production value / rule |
+|---|---|---|---|---|
+| `OPENAI_API_KEY` | **Yes** | secret | `llm/gateway.py` `OpenAIClient.__init__` (sole reader) | Dedicated OpenAI production Project key. Service scope only. |
+| `DATABASE_URL` | **Yes** | secret | `main.py` → `datastore/engine.py` | Reference the Railway PostgreSQL service: `${{Postgres.DATABASE_URL}}`. |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | **Yes** | secret | `api/auth.py` `FirebaseIdentityVerifier` — verifies the Firebase ID token on every `POST /api/ai/chat/completions` call | Without it, the sole API route permanently 503s (no ambient Google credentials exist on Railway) — this is the only auth gate keeping the OpenAI-backed endpoint from being an open, unauthenticated relay. Least-privileged service account. |
+| `TOUCHORDERS_ENVIRONMENT` | **Yes** | configuration | `main.py` fail-fast validation gate | `production` |
+| `TOUCHORDERS_CORS_ORIGINS` | **Yes** | configuration | `api/app.py` `CORSMiddleware` | Exact Firebase Hosting origins, comma-separated (e.g. `https://<project>.web.app,https://<project>.firebaseapp.com`). Never `*` in production. |
+| `AUTH_API_KEY_PEPPER` | No — unused | secret (future) | Declared in `settings.py`; **not read anywhere else in the codebase.** Reserved for machine API-key hashing (§13.3), not yet implemented. | Safe to omit today; set it before that feature ships. |
+| `FIREBASE_DATABASE_URL` | No — unused | configuration (future) | Declared in `settings.py`; **not read anywhere else.** The `ingestion/adapters/firebase_rtdb.py` seam that would consume it is defined but never instantiated by any composition root. | Safe to omit today; set it when the RTDB ingestion listener is wired. |
+| `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | No — unused | configuration (future) | Declared in `settings.py`; **not read anywhere else.** Firebase ID-token verification (`firebase_admin.auth.verify_id_token`) validates against the Firebase project internally and does not consult these fields. | Safe to omit today. |
+| `TOUCHORDERS_LOG_LEVEL` | Recommended | configuration | `main.py` → `observability/logging.py` | `INFO` |
+| `TOUCHORDERS_LOG_JSON` | Recommended | configuration | `main.py` → `observability/logging.py` | `true` |
 
 The frontend is deployed to **Firebase Hosting** — never to Railway or any other host. Its only
 deployment-time variable is the non-secret `VITE_API_BASE_URL` — the Railway backend origin —
