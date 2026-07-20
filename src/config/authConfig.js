@@ -15,12 +15,9 @@
 export const AUTH_CONFIG = {
     adminEmail: 'fitzhofer@gmail.com',
     branches: {
-        branch1: {
-            email: 'pamaybay88@gmail.com',
-            name: 'Branch 1'
-        },
+        // branch1 was decommissioned after pilot testing; branch2 is the only operational branch.
         branch2: {
-            emails: ['doralyncascato3@gmail.com'],
+            emails: ['doralyncascato3@gmail.com', 'dummy@dummy.com'],
             name: 'Sugar Cafe Nivel Hills'
         }
     }
