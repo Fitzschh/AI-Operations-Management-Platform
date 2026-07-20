@@ -119,12 +119,6 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("TOUCHORDERS_LOG_JSON", "LOG_JSON"),
     )
-    firebase_database_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "FIREBASE_DATABASE_URL", "TOUCHORDERS_FIREBASE_DATABASE_URL"
-        ),
-    )
     firebase_service_account_json: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -136,22 +130,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices(
             "FIREBASE_CREDENTIALS_PATH", "TOUCHORDERS_FIREBASE_CREDENTIALS_PATH"
-        ),
-    )
-    auth_jwt_issuer: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("AUTH_JWT_ISSUER", "TOUCHORDERS_AUTH_JWT_ISSUER"),
-    )
-    auth_jwt_audience: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "AUTH_JWT_AUDIENCE", "TOUCHORDERS_AUTH_JWT_AUDIENCE"
-        ),
-    )
-    auth_api_key_pepper: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "AUTH_API_KEY_PEPPER", "TOUCHORDERS_AUTH_API_KEY_PEPPER"
         ),
     )
     cors_allow_origins: str = Field(

@@ -8,7 +8,6 @@
 #
 # Keep this list in sync with [project.dependencies] in pyproject.toml, which remains the source
 # of truth for local development (`pip install -e ".[dev]"`).
-alembic>=1.13,<2
 fastapi>=0.115,<1
 firebase-admin>=6.5,<7
 openai>=1.0,<3

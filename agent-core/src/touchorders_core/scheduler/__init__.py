@@ -1,1 +1,0 @@
-"""Idempotent scheduled deterministic jobs."""

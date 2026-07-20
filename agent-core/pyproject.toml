@@ -9,7 +9,6 @@ description = "Deterministic, auditable agent core for TouchOrders restaurant op
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "alembic>=1.13,<2",
   "fastapi>=0.115,<1",
   "firebase-admin>=6.5,<7",
   "openai>=1.0,<3",
@@ -52,69 +51,28 @@ type = "forbidden"
 source_modules = ["touchorders_core.domain"]
 forbidden_modules = [
   "touchorders_core.datastore",
-  "touchorders_core.ingestion",
-  "touchorders_core.analytics",
-  "touchorders_core.rules_engine",
-  "touchorders_core.agents",
   "touchorders_core.llm",
-  "touchorders_core.tools",
-  "touchorders_core.workflows",
-  "touchorders_core.approvals",
-  "touchorders_core.memory",
   "touchorders_core.api",
-  "touchorders_core.scheduler",
   "touchorders_core.observability",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Datastore does not depend on orchestration"
+name = "Datastore does not depend on the AI or API layers"
 type = "forbidden"
 source_modules = ["touchorders_core.datastore"]
-forbidden_modules = [
-  "touchorders_core.agents",
-  "touchorders_core.llm",
-  "touchorders_core.tools",
-]
+forbidden_modules = ["touchorders_core.llm", "touchorders_core.api"]
 
 [[tool.importlinter.contracts]]
-name = "Analytics and rules cannot reach the AI layer"
-type = "forbidden"
-source_modules = ["touchorders_core.analytics", "touchorders_core.rules_engine"]
-forbidden_modules = ["touchorders_core.agents", "touchorders_core.llm"]
-
-[[tool.importlinter.contracts]]
-name = "Agents cannot call OpenAI or execution services directly"
-type = "forbidden"
-source_modules = ["touchorders_core.agents"]
-forbidden_modules = ["openai", "touchorders_core.workflows", "touchorders_core.approvals"]
-# §5.3 is a DIRECT-import boundary: agents legitimately reach openai only *through* the LLM
-# gateway interface and approvals.notifier only *through* tools.registry — both spec-blessed
-# edges. The single-openai-chokepoint (P4) is separately enforced by the AST guard test.
-allow_indirect_imports = "true"
-
-[[tool.importlinter.contracts]]
-name = "LLM subsystem is isolated from agents tools and API"
+name = "LLM subsystem is isolated from the API layer"
 type = "forbidden"
 source_modules = ["touchorders_core.llm"]
-forbidden_modules = ["touchorders_core.agents", "touchorders_core.tools", "touchorders_core.api"]
+forbidden_modules = ["touchorders_core.api"]
 
 [[tool.importlinter.contracts]]
-name = "Tools cannot depend on LLMs or agents"
-type = "forbidden"
-source_modules = ["touchorders_core.tools"]
-forbidden_modules = ["touchorders_core.llm", "touchorders_core.agents"]
-
-[[tool.importlinter.contracts]]
-name = "Workflows and approvals cannot depend on LLMs or agents"
-type = "forbidden"
-source_modules = ["touchorders_core.workflows", "touchorders_core.approvals"]
-forbidden_modules = ["touchorders_core.llm", "touchorders_core.agents"]
-
-[[tool.importlinter.contracts]]
-name = "API cannot bypass the LLM gateway or tool executor"
+name = "API cannot bypass the LLM gateway"
 type = "forbidden"
 source_modules = ["touchorders_core.api"]
-forbidden_modules = ["openai", "touchorders_core.tools.executor"]
-# DIRECT-import boundary: the API reaches openai only *through* the LLM gateway (the intended path,
-# not a bypass). The single-openai-chokepoint (P4) is separately enforced by the AST guard test.
+forbidden_modules = ["openai"]
+# DIRECT-import boundary: the API reaches openai only *through* the LLM gateway. The
+# single-openai-chokepoint (P4) is separately enforced by the AST guard test.
 allow_indirect_imports = "true"
