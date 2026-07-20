@@ -48,10 +48,11 @@ const FOOTER_CONTENT = {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { login, isAuthenticated, loading, error, user, forgotPassword } = useAuth();
+  const { login, isAuthenticated, loading, error, user, forgotPassword, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState('');
+  const [unassignedEmail, setUnassignedEmail] = useState(null);
   const [staySignedIn, setStaySignedIn] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
@@ -66,15 +67,24 @@ export default function LoginPage() {
     if (cooldownRef.current) clearInterval(cooldownRef.current);
   }, []);
 
-  // Route authenticated users to their workspace.
+  // Route authenticated users to their workspace. Accounts with no branch assignment MUST NOT
+  // be navigated anywhere: the old `|| 'branch1'` fallback sent them to a branch ProtectedRoute
+  // rejects, which bounced back here and re-fired this effect — an infinite redirect loop.
   useEffect(() => {
-    if (!isAuthenticated || !user?.email) return;
+    if (!isAuthenticated || !user?.email) {
+      setUnassignedEmail(null);
+      return;
+    }
     if (isUserAdmin(user.email)) {
       navigate('/home-admin', { replace: true });
       return;
     }
     const branchId = getUserBranch(user.email);
-    navigate(`/home/${branchId || 'branch1'}`, { replace: true });
+    if (!branchId) {
+      setUnassignedEmail(user.email);
+      return;
+    }
+    navigate(`/home/${branchId}`, { replace: true });
   }, [isAuthenticated, user, navigate]);
 
   async function handleSubmit(e) {
@@ -168,6 +178,23 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
               </div>
+            </div>
+          )}
+
+          {unassignedEmail && (
+            <div className="lg__error" role="alert">
+              This account ({unassignedEmail}) has not yet been assigned to a restaurant or branch.
+              Please contact your administrator.{' '}
+              <button
+                type="button"
+                className="lg__link"
+                onClick={() => {
+                  setUnassignedEmail(null);
+                  logout();
+                }}
+              >
+                Sign out
+              </button>
             </div>
           )}
 
