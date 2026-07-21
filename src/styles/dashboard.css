@@ -205,6 +205,8 @@
 .rec__title { font-weight: 650; font-size: var(--text-base); color: var(--text-1); }
 .rec__detail { display: grid; gap: 5px; font-size: var(--text-sm); color: var(--text-2); }
 .rec__detail b { color: var(--text-3); font-weight: 700; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 4px; }
+.rec__why { margin-left: auto; padding: 3px 12px; font: inherit; font-size: var(--text-xs); font-weight: 650; color: var(--brand, #7c5cff); background: transparent; border: 1px solid var(--brand, #7c5cff); border-radius: 999px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.rec__why:hover { background: var(--brand, #7c5cff); color: #fff; }
 
 @media (max-width: 1200px) {
   .dash__kpis { grid-template-columns: repeat(2, 1fr); }

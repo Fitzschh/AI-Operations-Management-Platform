@@ -430,6 +430,16 @@ ${hourlySummary}`,
   if (weeklySummary) sections.push(`=== WEEKLY TRENDS ===\n${weeklySummary}`);
   if (monthlySummary) sections.push(`=== MONTHLY TRENDS ===\n${monthlySummary}`);
 
+  // Conversational memory (chat only): the caller passes the recent turns so follow-ups like
+  // "what about yesterday?" resolve in context. Bounded to the last 10 short turns — negligible
+  // tokens, and empty for every non-chat mode (they never pass reportContext.conversation).
+  const priorTurns = Array.isArray(reportContext.conversation) ? reportContext.conversation.slice(-10) : [];
+  const conversationBlock = priorTurns.length > 0
+    ? `\n=== CONVERSATION SO FAR (most recent last; resolve the manager's follow-up against this) ===\n${priorTurns
+        .map((t) => `  ${t.role === 'user' ? 'Manager' : 'You'}: ${String(t.text || '').replace(/\s+/g, ' ').slice(0, 400)}`)
+        .join('\n')}\n`
+    : '';
+
   return `Analytics data from the restaurant self-ordering system.
 
 Report time: ${reportContext.asOfLabel || 'Current time'}
@@ -437,7 +447,7 @@ Manager name: ${reportContext.managerNickname || 'Manager'}
 Branch: ${reportContext.branchLabel || 'Current branch'}
 Time of day label: ${reportContext.timeOfDayLabel || 'Current shift'}
 Manager question or scenario: ${reportContext.scenario || 'N/A'}
-
+${conversationBlock}
 ${sections.join('\n\n')}
 
 Provide operational interpretation, not a dashboard recap.`;

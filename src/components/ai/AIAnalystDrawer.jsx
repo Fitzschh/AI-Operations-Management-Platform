@@ -95,10 +95,25 @@ function AiMessage({ msg }) {
   );
 }
 
+// Conversational memory: chat survives closing/reopening the drawer within the session, so the
+// analyst keeps context. sessionStorage only — no backend, cleared on logout with the other keys.
+const CHAT_KEY = (branchId) => `emp_ai_chat_${branchId}`;
+const MAX_STORED_TURNS = 12;   // persisted
+const MAX_CONTEXT_TURNS = 10;  // sent to the AI
+
+function loadChat(branchId) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CHAT_KEY(branchId)));
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function AIAnalystDrawer({ open, onClose, initialAction = null }) {
   const { nickname, user } = useAuth();
   const { branchId, aiAnalyticsData, hasOrders } = useBranchData();
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => loadChat(branchId));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const bodyRef = useRef(null);
@@ -180,6 +195,15 @@ export default function AIAnalystDrawer({ open, onClose, initialAction = null })
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, busy]);
 
+  // Persist the conversation (last N turns) for this session so reopening continues it.
+  useEffect(() => {
+    if (!branchId) return;
+    try {
+      const keep = messages.filter((m) => m.role === 'user' || m.role === 'ai').slice(-MAX_STORED_TURNS);
+      sessionStorage.setItem(CHAT_KEY(branchId), JSON.stringify(keep));
+    } catch { /* storage full or unavailable — memory silently degrades to this session view */ }
+  }, [messages, branchId]);
+
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
@@ -213,11 +237,19 @@ export default function AIAnalystDrawer({ open, onClose, initialAction = null })
     setBusy(true);
     setUsageState(incrementUsage());
     try {
-      const payload = { ...aiAnalyticsData, reportContext: reportContext(scenario ? { scenario } : {}) };
+      // Chat modes carry recent turns so follow-ups resolve in context; one-click reports don't.
+      const isChat = mode === 'opschat' || mode === 'simulation';
+      const conversation = isChat
+        ? messages
+          .filter((m) => (m.role === 'user' || m.role === 'ai') && m.text)
+          .slice(-MAX_CONTEXT_TURNS)
+          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text }))
+        : undefined;
+      const extra = { ...(scenario ? { scenario } : {}), ...(conversation ? { conversation } : {}) };
+      const payload = { ...aiAnalyticsData, reportContext: reportContext(extra) };
       // Question-specific modes (chat/simulation) are always fresh; the fixed one-click modes
       // (live/briefing/leak) are cache-first — the service cooldown guards repeat clicks.
-      const forceFresh = mode === 'opschat' || mode === 'simulation';
-      const result = await generateAIAnalysis(payload, branchId, forceFresh, mode);
+      const result = await generateAIAnalysis(payload, branchId, isChat, mode);
       const text = result.answer
         || result.summary
         || result.greeting

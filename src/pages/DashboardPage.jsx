@@ -588,9 +588,21 @@ export default function DashboardPage() {
                       <span><b>Evidence</b> {rec.evidence}</span>
                       <span><b>Impact</b> {rec.impact}</span>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2" style={{ alignItems: 'center' }}>
                       <span className="pill pill--neutral num">{rec.confidence}% confidence</span>
                       {rec.isForecast && <span className="pill pill--brand">AI forecast</span>}
+                      <button
+                        type="button"
+                        className="rec__why"
+                        onClick={() => window.dispatchEvent(new CustomEvent('emp:open-ai', {
+                          detail: {
+                            mode: 'opschat',
+                            userText: `Why this recommendation: "${rec.title}"? Explain it using only these already-computed figures — do not invent or recompute any numbers. Problem: ${rec.problem} Evidence: ${rec.evidence} Expected impact: ${rec.impact} (confidence ${rec.confidence}%). Cover why it exists, the supporting evidence, the likely business impact, and what I should do.`,
+                          },
+                        }))}
+                      >
+                        Why?
+                      </button>
                     </div>
                   </div>
                 ))}
