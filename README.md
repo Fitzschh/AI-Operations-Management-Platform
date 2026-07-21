@@ -1,71 +1,275 @@
-# E-Menu Portal V2 — Powered by Touch
+# TouchOrders
 
-The next-generation AI-Assisted Restaurant Operations & Analytics platform, built as a
-**drop-in replacement** for the Version 1 pilot (`AI-automated-restaurant-operations`).
-Both versions run against the **same Firebase project and the same Realtime Database
-structure** so pilot testers can compare them side by side during Week 2.
+**AI operations intelligence for restaurants.** TouchOrders turns a café's live order data into
+plain-language operational advice — an AI analyst that watches the numbers, spots what matters, and
+tells the owner what to do next, instead of another dashboard they have to interpret themselves.
+Deterministic analytics compute the facts; OpenAI explains them. The AI never invents a number.
 
-## What's new vs Version 1
+---
 
-| Area | Version 2 |
+## Problem
+
+Small restaurant owners are drowning in operational data and starved of operational *insight*. A
+typical café owner:
+
+- Sees dashboards full of charts but has no time to interpret them mid-service.
+- Reacts to stockouts and slow hours *after* they cost money, not before.
+- Can't afford a full-time business analyst or operations manager.
+- Gets generic advice from tools that don't know *their* menu, *their* peak hours, or *their* numbers.
+
+They don't need more data. They need someone to read the data for them and say, in plain words,
+"here's what happened, why, and what to do."
+
+---
+
+## Solution
+
+TouchOrders is that someone — a lightweight AI operations analyst layered over the café's existing
+Firebase data. It observes real orders, analyzes them with deterministic Python/JS math, and asks
+OpenAI to **explain and recommend** in the voice of an experienced operations consultant.
+
+The guiding philosophy: **Observe → Analyze → Recommend → Explain** — proactive intelligence, not a
+passive dashboard. Every statistic is computed deterministically before the AI ever sees it, so the
+AI only interprets real figures and can never fabricate one.
+
+---
+
+## Core Features
+
+- **AI Operations Dashboard** — animated KPIs, deltas vs. yesterday/last week, a Business Health
+  score, and live AI commentary that interprets rather than repeats the numbers.
+- **Live Restaurant Analytics** — Today / 7d / 30d / 12-month periods, interactive dependency-free
+  SVG charts (area, bar, donut, hourly heat-strip), category mix, and a statistical overview.
+- **AI Shift Handoff (Daily Business Brief)** — a once-per-day briefing generated on login and
+  cached for the day: yesterday's revenue, top and fastest-growing products, inventory risks, one
+  operational insight, and the most important action for the shift.
+- **Executive Presentation Generator** — a full-screen, scene-by-scene board-meeting briefing
+  narrated by the AI (today vs. yesterday, weekly momentum, product movers, risks, forecast, action
+  plan).
+- **Revenue Leak Detection** — surfaces likely missed revenue (stockout losses, peak-hour
+  bottlenecks, slow movers) grounded in the café's own sales and inventory data.
+- **AI Chat Assistant** — an "Ask AI Analyst" drawer with conversational memory: ask a question,
+  then follow up naturally ("what about yesterday?", "what should I do?"). Strictly scoped to
+  restaurant operations.
+- **Inventory Monitoring** — health score, predicted shortages ("~2 days left at current pace"),
+  urgency sorting, thresholds, and adjustment history.
+- **Sales Analytics** — deterministic revenue, order, AOV, and product-performance metrics computed
+  client-side from the live database.
+- **Smart Recommendations** — instant, deterministic recommendations (problem → evidence → impact →
+  confidence), each with a **"Why?"** button that calls the AI to explain *that specific*
+  recommendation using only the already-computed figures.
+
+---
+
+## AI Workflow
+
+```
+Restaurant data (orders, sales, inventory)
+        │
+        ▼
+Firebase Realtime Database        ← single source of truth for all operational data
+        │
+        ▼
+Deterministic analytics (client)  ← metrics, patterns, forecasts, recommendations
+        │
+        ▼
+FastAPI AI Gateway (Railway)      ← verifies the Firebase ID token, holds the OpenAI key,
+        │                            forwards the request, returns the response — nothing else
+        ▼
+OpenAI (gpt-4o-mini)              ← explains the computed analytics and writes recommendations
+        │
+        ▼
+Insights (structured JSON)
+        │
+        ▼
+Restaurant owner
+```
+
+Key properties:
+
+- **Firebase stores all operational data.** Orders, sales, inventory, and menus live only in the
+  Realtime Database.
+- **FastAPI is only an authenticated AI gateway.** It verifies the Firebase ID token, holds the
+  OpenAI API key, forwards the request, and returns the answer.
+- **OpenAI performs the analysis** — interpretation, recommendations, and narrative, never the
+  arithmetic.
+- **Operational data never lives inside the backend.** The gateway is stateless: no database, no
+  mirrors, no restaurant records. It reads nothing from Firebase except the token it verifies.
+
+---
+
+## Architecture
+
+```
+                Tablet / Dashboard (React + Vite)
+                          │
+          ┌───────────────┼───────────────┐
+          │               │               │
+          ▼               ▼               ▼
+   Firebase Auth   Realtime Database   FastAPI (Railway)
+   (identity)      (operational data)  (authenticated AI gateway)
+                                              │
+                                              ▼
+                                        OpenAI (gpt-4o-mini)
+```
+
+The frontend talks to Firebase directly for authentication and data, and to FastAPI **only** for
+AI. The backend is intentionally minimal — a secure key holder and request forwarder — so the OpenAI
+key never reaches the browser.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
 |---|---|
-| Design | Café-first design system inspired by the V1 login: espresso/caramel/cream palette, Fraunces menu-style serif + Inter + JetBrains Mono, warm glass sidebar/topbar, rounded cards, soft shadows, dark ("espresso bar") & light ("daylight café") themes, micro-animations, loading skeletons |
-| Dashboard | Executive command center: animated KPI counters, sparklines, vs-yesterday / vs-last-week deltas, deterministic AI commentary, Business Health Score with explainable breakdown, alerts, top/slow products, tomorrow's forecast, ranked smart recommendations (problem → evidence → impact → confidence) |
-| Analytics | BI workspace with Today / Yesterday / 7d / 30d / 12-months / custom period switching, interactive SVG charts (area, bar, donut, hour heat-strip), category revenue mix, statistical overview |
-| AI | Unified **AI Business Analyst** drawer (work chat, shift briefing, revenue-leak detector, what-if simulator) + **Executive Presentation**: a full-screen, autoplaying, scene-by-scene board-meeting briefing narrated by the AI |
-| Inventory | Health score, predicted shortages ("~2 days left at current pace"), urgency sorting, smart filters, animated stock indicators, threshold editing, adjustment history |
-| Orders | Live order cards with search, detail modal, trash bin; **Order Ledger** with include/exclude analytics corrections (fully mobile-friendly) |
-| Reports | Print-ready executive report (Print → Save as PDF) with charts, tables, forecast outlook and optional AI commentary |
-| Mobile | Mobile-first: bottom navigation, safe-area insets, bottom-sheet modals, no hidden actions |
-| Performance | One shared realtime data provider (V1 opened duplicate Firebase listeners per page), route-level code splitting, dependency-free SVG charts |
+| **Frontend** | React 18, Vite, React Router, Lucide icons, dependency-free SVG charts |
+| **Backend** | FastAPI + Uvicorn (Python 3.12), `firebase-admin` (token verification), OpenAI SDK |
+| **Database** | Firebase Realtime Database |
+| **Authentication** | Firebase Authentication (email/password → ID tokens verified server-side) |
+| **Hosting** | Firebase Hosting (frontend) · Railway (backend) |
+| **AI** | OpenAI Chat Completions — `gpt-4o-mini` |
 
-## Compatibility guarantees
+---
 
-- **Same database, zero migrations.** All reads/writes go through the V1 data layer,
-  copied verbatim into `src/lib` (`analyticsApi`, `inventoryApi`, `menuApi`, …).
-- **Same background processors.** Order → analytics ledger and order → inventory
-  consumption run identically (`useAnalyticsProcessor`, `useInventoryProcessor`).
-- **Same auth model.** Firebase email/password + `src/config/authConfig.js` branch map.
-- **Same Firebase config strategy.** Real config values in `.env` (copied from V1),
-  loaded via Vite env vars exactly like V1 — Spark-plan friendly, no server runtime.
-- **Same AI integration.** Client-side OpenAI calls with V1's prompt builders and JSON
-  modes (`realtime`, `deep`, `executive`, `briefing`, `leak`, `simulation`, `opschat`).
+## Screenshots
 
-## Run
+> _Add screenshots before submission._
+
+| Dashboard | AI Analyst Chat | Executive Presentation |
+|---|---|---|
+| _`docs/screenshots/dashboard.png`_ | _`docs/screenshots/ai-chat.png`_ | _`docs/screenshots/executive.png`_ |
+
+| Analytics | Inventory | Smart Recommendations |
+|---|---|---|
+| _`docs/screenshots/analytics.png`_ | _`docs/screenshots/inventory.png`_ | _`docs/screenshots/recommendations.png`_ |
+
+---
+
+## Demo
+
+> 🎥 **Demo video:** _add YouTube link before submission._
+
+---
+
+## Pilot Testing
+
+TouchOrders was validated in a **real restaurant pilot** at *Sugar Cafe Nivel Hills*, running against
+live order and inventory data in the same Firebase project the platform uses in production. The pilot
+informed the cost model (the AI is designed to stay a small fraction of a café's subscription) and
+the "AI never invents numbers" honesty rules enforced throughout the UI.
+
+> _No performance statistics are claimed here; the pilot validated real-world usage and workflow fit._
+
+---
+
+## Installation
+
+### Prerequisites
+- Node.js 18+ and npm
+- Python 3.12
+- A Firebase project (Authentication + Realtime Database) and an OpenAI API key
+
+### Frontend
 
 ```bash
 npm install
-npm run dev        # local development
-npm run build      # production build to dist/
-firebase deploy --only hosting   # deploys dist/ (see firebase.json)
+npm run dev      # local dev server (http://localhost:5173)
+npm run build    # production build → dist/
+firebase deploy --only hosting   # deploy dist/ to Firebase Hosting
 ```
 
-> Deploying both versions: V1 and V2 share one Firebase project. Deploy them to two
-> hosting sites (e.g. `firebase hosting:sites:create ops-manager-v2`, add a target in
-> `firebase.json`) or deploy V2 to a separate channel:
-> `firebase hosting:channel:deploy v2`.
+### Backend (AI gateway)
 
-## Structure
-
-```
-src/
-  config/authConfig.js      # branch/role map (V1-identical)
-  context/                  # Auth, Theme, BranchData (shared live streams)
-  hooks/                    # V1 processors + useIsMobile
-  lib/                      # V1 data layer (verbatim) + recommendations.js (V2)
-  components/
-    ui/                     # AnimatedNumber, Sparkline, charts, Modal, ScoreRing…
-    layout/                 # AppShell (sidebar/topbar/bottom-nav), SettingsModal
-    ai/                     # AIAnalystDrawer, ExecutivePresentation
-  pages/                    # Login, Dashboard, Analytics, Inventory, Orders,
-                            # Menu, Reports, HistoryPage (ledger), AdminHome
-  styles/                   # tokens.css (design system), base.css, per-page css
+```bash
+cd agent-core
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn --app-dir src touchorders_core.main:app --reload   # local
+# production start command (Railway): see agent-core/railway.toml
 ```
 
-## Honesty rules (carried over from V1, enforced in UI)
+### Environment variables
 
-- Forecasts are always labeled **AI forecast** with a confidence percentage.
-- Metrics without underlying data say so ("No comparison data", "Needs more history")
-  instead of showing invented numbers.
-- The profit figure on the dashboard is explicitly labeled an **estimate** with its
-  assumed margin.
+**Frontend** (`.env`, exposed to the browser — non-secret):
+
+```
+VITE_API_BASE_URL=https://<your-backend>.up.railway.app   # backend origin
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_DATABASE_URL=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_APP_ID=...
+```
+
+**Backend** (Railway Variables — secret; never in the repo). See
+[`agent-core/.env.example`](agent-core/.env.example) and
+[`agent-core/docs/deployment/railway-secrets.md`](agent-core/docs/deployment/railway-secrets.md):
+
+```
+OPENAI_API_KEY=sk-...                    # the only OpenAI key holder
+FIREBASE_SERVICE_ACCOUNT_JSON={...}      # used only for verify_id_token
+```
+
+Full step-by-step deployment: [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+---
+
+## Repository Structure
+
+```
+.
+├── src/                      # React frontend
+│   ├── config/               # branch/role access map
+│   ├── context/              # Auth, Theme, BranchData, LiveAnalystProvider
+│   ├── hooks/                # deterministic analytics + inventory processors
+│   ├── lib/                  # data layer, analytics, recommendations, AI service + prompts
+│   ├── components/           # ui/, layout/, ai/, help/
+│   ├── pages/                # Login, Dashboard, Analytics, Inventory, Orders, Menu, Reports…
+│   └── styles/               # design tokens + per-page CSS
+├── agent-core/               # FastAPI AI gateway (deployed to Railway)
+│   ├── src/touchorders_core/ # api/ (routes + auth), llm/ (OpenAI gateway), settings, main
+│   ├── tests/                # unit tests for the gateway
+│   ├── railway.toml          # Railway build + start config
+│   └── docs/deployment/      # secrets & deployment notes
+├── firebase.json             # Firebase Hosting config (static SPA)
+├── database.rules.json       # Realtime Database security rules
+├── DEPLOYMENT.md             # end-to-end deployment guide
+└── README.md
+```
+
+---
+
+## Security
+
+- **Firebase Authentication** — every user signs in with Firebase; the frontend never handles
+  raw credentials beyond the sign-in form.
+- **Firebase Security Rules** — [`database.rules.json`](database.rules.json) restricts each branch's
+  data to its authorized user UIDs; the Realtime Database enforces access, not the client.
+- **OpenAI key isolation** — the API key exists only in the Railway backend's environment variables.
+  It is never in the frontend bundle, Firebase, or the repository.
+- **Server-side token verification** — the FastAPI gateway verifies the caller's Firebase ID token
+  (`firebase-admin`) on every AI request; anonymous requests are rejected with `401`.
+- **Stateless gateway** — the backend persists nothing, so there is no operational data at rest
+  outside Firebase to secure.
+
+---
+
+## Future Roadmap
+
+- **Server-side prompt templates** — move prompt construction into the gateway to shrink client
+  payloads and further harden the AI boundary.
+- **True multi-agent synthesis** — have an Operations Manager role synthesize the Realtime Analyst
+  and Business Analyst outputs within the existing single gateway call.
+- **Deterministic-first recommendations everywhere** — surface computed recommendations instantly
+  across all pages, with AI explanation on demand.
+- **Provider portability** — abstract the gateway to support alternative models (e.g. Gemini) behind
+  the same authenticated seam.
+- **Multi-tenant access** — replace the pilot's UID allowlist with Firebase custom claims for
+  scalable per-restaurant isolation.
+
+---
+
+## License
+
+Released under the MIT License. See [`LICENSE`](LICENSE).

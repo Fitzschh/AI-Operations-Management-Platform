@@ -1,5 +1,13 @@
 # TouchOrders — Software Architecture Specification
 
+> ⚠️ **Historical design document — superseded.** This specifies the *original, ambitious*
+> multi-agent backend design (Rules Engine, Workflow Engine, Tool Registry, agent runtime,
+> memory, approval pipeline). That backend was **intentionally simplified** for the pilot: the
+> shipped backend is a **minimal, stateless FastAPI AI gateway** (verify token → hold key →
+> forward to OpenAI → return), and Firebase Realtime Database is the single source of truth.
+> For the **current** architecture, see the [README](../README.md). This document is retained for
+> design rationale and history only; it does not describe the code as deployed.
+
 | | |
 |---|---|
 | **System** | TouchOrders Agent Core — AI-powered restaurant operations platform |
