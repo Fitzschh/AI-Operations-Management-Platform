@@ -66,7 +66,7 @@ export default function ExecutivePresentation({ open, onClose }) {
     generateAIAnalysis(
       { ...aiAnalyticsData, reportContext: { managerNickname, branchLabel, asOfLabel: new Date().toLocaleString() } },
       branchId,
-      true,
+      false, // re-opens within the hour replay the cached narration instead of re-billing
       'executive'
     )
       .then((result) => { if (!cancelled) setAi(result); })

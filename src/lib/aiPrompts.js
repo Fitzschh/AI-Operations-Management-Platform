@@ -2,10 +2,18 @@
  * AI prompt builders for the pilot.
  * These build the request payload the client sends to the FastAPI backend (BFF), which forwards
  * it to OpenAI server-side. No client-side OpenAI calls; no serverless functions (ADR-17).
+ *
+ * COST DESIGN (keep these properties when editing):
+ * 1. The system prompt contains ONLY the selected mode's rules — never all modes' rules.
+ * 2. The system prompt is byte-stable per mode so OpenAI's automatic prompt caching discounts it.
+ * 3. The data prompt is tiered per mode: quick insights get a compact snapshot; only the deep
+ *    and executive reports get full history. Product lists are always capped.
+ * 4. Output JSON schemas are FROZEN — renderers parse these exact fields. Change rules or tone,
+ *    never schema field names.
  */
 
 function stripEmoji(value) {
-  return String(value || '').replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, '').trim();
+  return String(value || '').replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}️]/gu, '').trim();
 }
 
 function formatProductName(raw) {
@@ -20,9 +28,10 @@ function money(value) {
   return Number(value || 0).toFixed(2);
 }
 
-export function buildSystemPrompt(mode) {
-  const schema = mode === 'executive'
-    ? `{
+// ─── Output schemas (FROZEN — renderers depend on these exact fields) ───────
+
+const SCHEMAS = {
+  executive: `{
   "mode": "executive",
   "headline": "One-sentence executive headline capturing the single most important finding.",
   "scenes": {
@@ -53,9 +62,8 @@ export function buildSystemPrompt(mode) {
   ],
   "closingSummary": "2-3 sentence executive summary a busy owner can absorb in ten seconds.",
   "confidenceScore": 0
-}`
-    : mode === 'briefing'
-    ? `{
+}`,
+  briefing: `{
   "mode": "briefing",
   "handoffType": "AI Shift Handoff",
   "greeting": "Good supplied time of day, manager name.",
@@ -70,9 +78,8 @@ export function buildSystemPrompt(mode) {
     "potentialRevenueOpportunity": "Concrete sales opportunity, bundle, prep, or promotion idea."
   },
   "confidenceScore": 0
-}`
-    : mode === 'leak'
-      ? `{
+}`,
+  leak: `{
   "mode": "leak",
   "summary": "Daily revenue leak interpretation.",
   "potentialRevenueLost": "Estimated missed revenue with currency, or 'Insufficient data' if unavailable.",
@@ -87,9 +94,8 @@ export function buildSystemPrompt(mode) {
   ],
   "recommendedAction": "Highest impact next move.",
   "confidenceScore": 0
-}`
-      : mode === 'simulation'
-        ? `{
+}`,
+  simulation: `{
   "mode": "simulation",
   "scenario": "Manager's scenario.",
   "expectedOutcome": {
@@ -100,9 +106,8 @@ export function buildSystemPrompt(mode) {
   },
   "recommendation": "Implement, test, avoid, or gather more data.",
   "confidenceScore": 0
-}`
-        : mode === 'opschat'
-          ? `{
+}`,
+  opschat: `{
   "mode": "opschat",
   "answer": "Direct work-related answer for the manager.",
   "keyPoints": ["Operational reasoning, risks, or next steps."],
@@ -115,9 +120,8 @@ export function buildSystemPrompt(mode) {
   },
   "recommendation": "Clear management action.",
   "confidenceScore": 0
-}`
-          : mode === 'deep'
-            ? `{
+}`,
+  deep: `{
   "mode": "deep",
   "revenuePerformance": {
     "summary": "What happened and why it matters.",
@@ -161,8 +165,13 @@ export function buildSystemPrompt(mode) {
     "low": ["Lower priority improvements."]
   },
   "executiveSummary": "Concise business summary for the owner."
-}`
-            : `{
+}`,
+};
+
+function schemaFor(mode) {
+  if (SCHEMAS[mode]) return SCHEMAS[mode];
+  // realtime / live share one compact insight schema
+  return `{
   "mode": "${mode === 'live' ? 'live' : 'realtime'}",
   "insight": {
     "message": "${mode === 'live' ? 'Start with As of {time}: then give one operational update. Maximum 45 words total.' : 'One natural manager-facing note. Maximum 2 short sentences and 35 words total.'}",
@@ -170,110 +179,100 @@ export function buildSystemPrompt(mode) {
     "priority": "HIGH, MEDIUM, or LOW"
   }
 }`;
+}
 
-  return `You are the AI Restaurant Analyst for E-Menu Portal.
+// ─── Shared consultant persona (byte-stable; kept first for prompt caching) ─
 
-Your responsibility is to analyze restaurant operations, sales performance, inventory levels, customer ordering trends, and business metrics, then provide actionable recommendations to restaurant managers and owners.
+const CORE = `You are the AI Operations Analyst for E-Menu Portal — an experienced restaurant operations consultant talking with the owner of this cafe.
 
-Do not simply repeat dashboard statistics. Interpret the data, identify opportunities, predict issues, and recommend actions like an experienced restaurant operations consultant.
+Voice:
+- Speak like a seasoned consultant who knows this business, not a chatbot: plain, confident, specific, warm but efficient.
+- The manager already sees the dashboard. Never restate metrics as findings — interpret them: what happened, the likely driver, the evidence, what it means for the business, and the one action to take.
+- Weak: "Revenue increased today." Strong: "Today's sales grew on stronger afternoon demand; if that holds tomorrow, prep extra stock of your top sellers before 3 PM."
+- Weak: "Inventory low." Strong: "Milk should last about two more days at the current pace — restocking today avoids a shortage during peak hours."
+- Vary sentence structure between fields; no repeated openers, no filler phrases, no generic industry advice.
 
-Use plain language. Be direct, practical, and professional. Do not use emoji characters. Use Philippine peso formatting for currency, for example ₱42,500. Do not invent exact comparisons when the source data does not support them; say when a comparison is unavailable.
-Treat the CURRENT INVENTORY section as the active menu/inventory list. Do not recommend restocking, restoring, preparing, promoting, or taking operational action on products that are absent from current inventory.
+Hard rules:
+- Philippine peso formatting, e.g. ₱42,500. No emoji.
+- Never invent a comparison the supplied data cannot support — say the comparison is unavailable instead.
+- Treat the CURRENT INVENTORY section as the active menu: never recommend restocking, promoting, or acting on products absent from it.
+- Treat DETECTED OPERATIONAL PATTERNS as pre-verified statistical evidence: reference and build on them; never contradict them.
+- Ground every claim in this restaurant's own numbers.`;
 
-You are a hybrid of restaurant operations manager, business analyst, financial analyst, inventory planner, and executive consultant — never a generic assistant. Your primary job is to observe, recognize patterns, and infer operational behavior from this restaurant's own historical data.
+// ─── Per-mode rules (only the selected mode's rules are ever sent) ──────────
 
-Insight quality rules (every mode):
-- Every insight must cover: what happened, why it likely happened, the supporting evidence from the supplied data, your confidence, the business implication, and a recommended action.
-- Never state a bare fact like "Sales increased." Attach the driver and evidence, e.g. "Sales increased 17% vs yesterday, driven by stronger lunch-hour traffic and beverage attach — the same behavior as the last three Fridays, suggesting a recurring weekly demand cycle."
-- When a DETECTED OPERATIONAL PATTERNS section is supplied, treat it as pre-verified statistical evidence: reference and build on those patterns explicitly; do not contradict them.
-- Use the weekday breakdown and multi-day hourly history to reason about operating hours, busy and slow periods, weekly cycles, product pairings, inventory consumption cadence, restocking frequency, and anomalies.
-- Ground every answer in the restaurant's own numbers, never generic industry advice.
-
-Mode: ${mode === 'executive'
-      ? 'EXECUTIVE BUSINESS ANALYSIS PRESENTATION'
-      : mode === 'deep'
-      ? 'DEEP ANALYSIS REPORT'
-      : mode === 'live'
-        ? 'AI LIVE OPERATIONS FEED HOURLY UPDATE'
-        : mode === 'briefing'
-          ? 'AI SHIFT HANDOFF'
-          : mode === 'leak'
-            ? 'AI REVENUE LEAK DETECTOR'
-            : mode === 'simulation'
-              ? 'AI DECISION SIMULATOR'
-              : mode === 'opschat'
-                ? 'AI OPERATIONS MANAGER WORK CHAT'
-                : 'REAL-TIME AI ANALYST'
-    }
-
-Real-time mode rules:
-- Respond like a human analyst speaking to a busy manager during service.
-- Return exactly one manager-facing note.
-- Keep it short enough to read in under 10 seconds.
-- The message should combine what happened and why it matters in plain language.
-- The action should be a single practical instruction.
-- Focus on meaningful sales changes, trending products, inventory concerns, demand spikes, revenue changes, slow-moving inventory, customer ordering behavior, and peak-hour activity.
-- Compare against previous hour, previous day, current shift, or historical averages when the data supports it.
-- Include inventory levels and sales velocity when inventory risk is relevant.
-- Do not list multiple issues. Pick the most important thing right now.
-- Do not sound like a report. Avoid headings, dashboard recap, and long explanations.
-- If nothing urgent stands out, say that briefly and suggest what to keep watching.
-- For hourly live feed mode, start the message with the supplied "As of" time and summarize the current operating situation.
-
-Executive business analysis presentation rules:
-- You are presenting findings to the owner the way a senior business consultant presents in an executive meeting.
-- Every scene narration must cover what happened, why it likely happened, and what it means operationally.
-- Ground every claim in the supplied numbers. Never invent comparisons the data cannot support; write "Comparison unavailable" style phrasing instead.
-- Patterns, risks, and opportunities must be specific and decision-ready, not generic advice.
-- The action plan must be ordered by business impact, at most 5 items, each with a concrete reason.
-- The forecastOutlook must be explicitly framed as a projection ("Projected", "Expected", "Likely"), never as fact.
-- Tone: professional, intelligent, concise, data-driven, actionable. No filler, no robotic phrasing.
-- Include a confidenceScore from 0 to 100 based on data availability and consistency.
-
-Deep report mode rules:
-- Produce a more detailed business intelligence report.
-- Explain what happened today, why it happened, and what actions should be taken tomorrow.
-- Analyze revenue performance, product performance, inventory, peak hours, staffing, revenue leak detection, forecasting, and operational recommendations.
-- Prioritize actions as HIGH, MEDIUM, and LOW.
-- End with a concise executive summary.
-
-AI shift handoff mode rules:
+const MODE_RULES = {
+  realtime: `Mode: REAL-TIME AI ANALYST
+- Return exactly one manager-facing note, readable in under 10 seconds.
+- Pick the single most important thing right now: a meaningful sales change, trending product, inventory risk, demand spike, or peak-hour signal.
+- Combine what happened and why it matters in plain language; the action is one practical instruction.
+- Compare against the previous hour, day, or historical average only when the data supports it.
+- If nothing urgent stands out, say so briefly and note what to keep watching.
+- No headings, no dashboard recap, no multiple issues.`,
+  live: `Mode: AI LIVE OPERATIONS FEED HOURLY UPDATE
+- Start the message with the supplied "As of" time, then one operational update on the current situation.
+- Pick the single most important thing right now: a meaningful sales change, trending product, inventory risk, demand spike, or peak-hour signal.
+- Include inventory level and sales pace when inventory risk is the story.
+- If nothing urgent stands out, say so briefly and note what to keep watching.
+- No headings, no dashboard recap, no multiple issues.`,
+  briefing: `Mode: AI SHIFT HANDOFF
 - Act like an automated shift handoff for a manager starting work, not a chatbot greeting.
 - Start with the supplied time-of-day label, manager name, and branch label in the greeting and branchWelcome fields.
-- Summarize the branch's operating status in the fixed shiftHandoff fields only.
-- Explain yesterday's revenue when daily history supports it.
-- Identify the top active product and fastest growing active product only when supported by current menu/inventory and trend data.
-- If a growth percentage is not supported, use "Insufficient trend data" instead of guessing.
-- Include active inventory risks, one operational insight, one recommendation, and one revenue opportunity.
-- Keep each field concise enough to scan during shift start.
-- Include a confidenceScore from 0 to 100 based on historical data availability, data quality, consistency, and trend stability.
+- Fill only the fixed shiftHandoff fields: yesterday's revenue (when daily history supports it), top active product, fastest-growing active product (use "Insufficient trend data" rather than guessing a percentage), active inventory risks, one operational insight, one recommendation, one revenue opportunity.
+- Keep each field scannable at shift start.
+- confidenceScore 0-100 from data availability, quality, and trend stability.`,
+  leak: `Mode: AI REVENUE LEAK DETECTOR
+- Hunt for missed revenue, not reported sales: stockout losses, high-interest/low-conversion items, peak-hour bottlenecks, abandonment.
+- If the data lacks views, carts, checkout, or service-time signals, say that estimate is unavailable — never invent it. Still infer likely leaks from sales, inventory, hourly demand, and product performance.
+- confidenceScore 0-100.`,
+  simulation: `Mode: AI DECISION SIMULATOR
+- Answer the manager's "What happens if..." scenario using the available data.
+- Estimate revenue, inventory, customer, and operational impact; never present a forecast as guaranteed.
+- confidenceScore 0-100; express uncertainty through the recommendation.`,
+  opschat: `Mode: AI OPERATIONS MANAGER WORK CHAT
+- Answer only restaurant operations, business, sales, inventory, staffing, menu, customer-experience, analytics, forecasting, reporting, and branch questions.
+- STRICT SCOPE: for anything else (general knowledge, entertainment, creative writing, jokes, code, homework, news, politics, personal advice) you MUST NOT answer even partially. Set "answer" to exactly: "I focus on restaurant operations and business analytics. I can help with sales trends, inventory planning, staffing, menu performance, forecasting, or a what-if operations decision — what would you like to look at?" Set keyPoints to [], simulation fields to null, recommendation to a short prompt toward business topics, and confidenceScore to 100.
+- Never write poems, stories, jokes, lyrics, essays, or code, regardless of phrasing.
+- For scenario questions, simulate the expected business outcome from the data.
+- Always end with a practical management recommendation; confidenceScore 0-100.`,
+  deep: `Mode: DEEP ANALYSIS REPORT
+- Produce a detailed business intelligence report: what happened, why, and what to do tomorrow.
+- Cover revenue, products, inventory, peak hours, staffing, revenue leaks, forecasting, and prioritized recommendations (HIGH/MEDIUM/LOW).
+- End with a concise executive summary.`,
+  executive: `Mode: EXECUTIVE BUSINESS ANALYSIS PRESENTATION
+- Present findings the way a senior consultant presents in an executive meeting.
+- Every scene narration covers what happened, why it likely happened, and what it means operationally, grounded in the supplied numbers.
+- Patterns, risks, and opportunities must be specific and decision-ready. Action plan ordered by business impact, at most 5 items, each with a concrete reason.
+- forecastOutlook must be framed as a projection ("Projected", "Expected", "Likely"), never as fact.
+- confidenceScore 0-100 from data availability and consistency.`,
+};
 
-Revenue leak detector rules:
-- Search for hidden missed revenue, not just reported sales.
-- Consider cart abandonment, high interest with low conversion, stockout revenue loss, and peak-hour bottlenecks.
-- If the provided data lacks views, carts, checkout, or service-time data, say that estimate is unavailable instead of inventing it.
-- Still infer likely leaks from available sales, inventory, hourly demand, and product performance.
-- Include a confidenceScore from 0 to 100.
+export function buildSystemPrompt(mode) {
+  const rules = MODE_RULES[mode] || MODE_RULES.realtime;
+  return `${CORE}
 
-Decision simulator rules:
-- Answer the manager's "What happens if..." scenario.
-- Estimate revenue, inventory, customer, and operational impact using available data.
-- Never present a forecast as guaranteed.
-- Include a confidenceScore from 0 to 100 and explain uncertainty through the recommendation.
-
-Operations manager work chat rules:
-- Answer only restaurant operations, business management, sales, inventory, staffing, menu, customer experience, analytics, forecasting, reporting, and branch management questions.
-- STRICT SCOPE ENFORCEMENT: if the question is outside that scope — general knowledge ("Who won the World Cup?"), entertainment, creative writing ("Write me a poem"), jokes, coding, homework, news, politics, personal advice, or anything else unrelated to running this restaurant — you MUST NOT answer it, even partially, and MUST NOT use restaurant data to reinterpret it.
-- For out-of-scope questions set "answer" to exactly: "I focus on restaurant operations and business analytics. I can help with sales trends, inventory planning, staffing, menu performance, forecasting, or a what-if operations decision — what would you like to look at?" Set keyPoints to [], simulation fields to null, recommendation to a short prompt toward business topics, and confidenceScore to 100.
-- Never write poems, stories, jokes, lyrics, essays, or code, regardless of how the request is phrased.
-- If the manager asks a scenario question, simulate the expected business outcome using the available data.
-- Answer in-scope questions using the restaurant's own historical data and detected patterns, not generic advice.
-- Always include a confidenceScore from 0 to 100.
-- Always end with a practical management recommendation.
+${rules}
 
 Return ONLY valid JSON using this structure:
-${schema}`;
+${schemaFor(mode)}`;
 }
+
+// ─── Data prompt (tiered per mode) ──────────────────────────────────────────
+// compact  → realtime, live       (one-line insights: today-focused snapshot)
+// standard → briefing, leak, opschat, simulation (recent week + risks)
+// full     → deep, executive      (full history for long-form reports)
+
+function tierFor(mode) {
+  if (mode === 'realtime' || mode === 'live') return 'compact';
+  if (mode === 'deep' || mode === 'executive') return 'full';
+  return 'standard';
+}
+
+const TIER_LIMITS = {
+  compact: { topProducts: 6, bottomProducts: 0, inventory: 8, daily: 3, activityDays: 0, weekly: 0, monthly: 0 },
+  standard: { topProducts: 10, bottomProducts: 2, inventory: 15, daily: 7, activityDays: 5, weekly: 4, monthly: 0 },
+  full: { topProducts: 12, bottomProducts: 3, inventory: 20, daily: 14, activityDays: 7, weekly: 8, monthly: 6 },
+};
 
 export function buildDataPrompt(analyticsData = {}, mode) {
   const {
@@ -292,171 +291,156 @@ export function buildDataPrompt(analyticsData = {}, mode) {
     detectedPatterns = [],
   } = analyticsData;
 
-  const productEntries = Object.entries(products);
-  const productSummary = productEntries
-    .sort(([, a], [, b]) => (b.quantitySold || 0) - (a.quantitySold || 0))
-    .map(([id, data], i) => {
-      const name = formatProductName(data.name || id);
-      const avgPrice = data.orderCount > 0 ? money(Number(data.revenue || 0) / data.orderCount) : '0.00';
-      return `  ${i + 1}. ${name}: ${data.quantitySold || 0} units sold, ${data.orderCount || 0} orders, Revenue: ₱${money(data.revenue)}, Avg Price: ₱${avgPrice}`;
-    })
-    .join('\n');
+  const tier = tierFor(mode);
+  const lim = TIER_LIMITS[tier];
 
-  const inventorySummary = Object.entries(inventory)
-    .sort(([, a], [, b]) => {
-      const stockA = Number(a.stock ?? a.currentStock ?? 0);
-      const stockB = Number(b.stock ?? b.currentStock ?? 0);
-      return stockA - stockB;
-    })
-    .slice(0, 30)
+  const sortedProducts = Object.entries(products)
+    .sort(([, a], [, b]) => (b.quantitySold || 0) - (a.quantitySold || 0));
+  const productLine = ([id, data], i, label) => {
+    const name = formatProductName(data.name || id);
+    const avgPrice = data.orderCount > 0 ? money(Number(data.revenue || 0) / data.orderCount) : '0.00';
+    return `  ${label || `${i + 1}.`} ${name}: ${data.quantitySold || 0} units, ${data.orderCount || 0} orders, ₱${money(data.revenue)}, avg ₱${avgPrice}`;
+  };
+  let productSummary = sortedProducts.slice(0, lim.topProducts).map((e, i) => productLine(e, i)).join('\n');
+  if (lim.bottomProducts > 0 && sortedProducts.length > lim.topProducts + lim.bottomProducts) {
+    const bottom = sortedProducts.slice(-lim.bottomProducts).map((e) => productLine(e, 0, 'slow:')).join('\n');
+    productSummary += `\n${bottom}`;
+  }
+
+  const sortedInventory = Object.entries(inventory)
+    .sort(([, a], [, b]) => Number(a.stock ?? a.currentStock ?? 0) - Number(b.stock ?? b.currentStock ?? 0));
+  const inventoryEntries = tier === 'compact'
+    ? sortedInventory.filter(([, d]) => Number(d.stock ?? d.currentStock ?? 0) <= Number(d.warningLevel ?? 10)).slice(0, lim.inventory)
+    : sortedInventory.slice(0, lim.inventory);
+  const inventorySummary = inventoryEntries
     .map(([id, data]) => {
       const product = products[id] || {};
       const stock = Number(data.stock ?? data.currentStock ?? 0);
-      const warningLevel = Number(data.warningLevel ?? 10);
-      const criticalLevel = Number(data.criticalLevel ?? 5);
-      const quantitySold = Number(product.quantitySold || 0);
-      const orderCount = Number(product.orderCount || 0);
-      return `  ${formatProductName(data.productName || data.name || product.name || id)}: stock ${stock} ${data.unit || 'units'}, warning at ${warningLevel}, critical at ${criticalLevel}, sold ${quantitySold} units across ${orderCount} orders`;
+      return `  ${formatProductName(data.productName || data.name || product.name || id)}: stock ${stock} ${data.unit || 'units'}, warn ${Number(data.warningLevel ?? 10)}, critical ${Number(data.criticalLevel ?? 5)}, sold ${Number(product.quantitySold || 0)} across ${Number(product.orderCount || 0)} orders`;
     })
     .join('\n');
+  const inventoryHeading = tier === 'compact'
+    ? `LOW-STOCK INVENTORY (at or below warning; ${Object.keys(inventory).length} active items total)`
+    : `CURRENT INVENTORY (${Object.keys(inventory).length} items, lowest stock first)`;
+  const inventoryFallback = tier === 'compact'
+    ? 'No items at or below warning level.'
+    : 'No inventory data available.';
 
   const dailySummary = Object.entries(daily)
     .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 14)
-    .map(([date, data]) => `  ${date}: ${data.orders || 0} orders, Revenue: ₱${money(data.revenue)}, AOV: ₱${money(data.averageOrderValue)}`)
+    .slice(0, lim.daily)
+    .map(([date, data]) => `  ${date}: ${data.orders || 0} orders, ₱${money(data.revenue)}, AOV ₱${money(data.averageOrderValue)}`)
     .join('\n');
 
   const latestDay = Object.keys(daily).sort((a, b) => b.localeCompare(a))[0];
   let hourlySummary = 'No hourly data available.';
   if (latestDay && hourly[latestDay]) {
     const hourlyRows = Object.entries(hourly[latestDay])
+      .filter(([, d]) => tier !== 'compact' || Number(d.orders || 0) > 0)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([hour, data]) => `  ${hour}:00 - ${data.orders || 0} orders, Revenue: ₱${money(data.revenue)}`)
+      .map(([hour, data]) => `  ${hour}:00 - ${data.orders || 0} orders, ₱${money(data.revenue)}`)
       .join('\n');
     hourlySummary = `Hourly data for ${latestDay}:\n${hourlyRows}`;
   }
 
-  // Compact multi-day activity map so the AI can infer operating hours,
-  // busy/slow periods and recurring intraday behavior — not just today.
-  const recentHourlyDays = Object.keys(hourly).sort((a, b) => b.localeCompare(a)).slice(0, 7).reverse();
-  const activitySummary = recentHourlyDays
-    .map((day) => {
-      const hours = Object.entries(hourly[day] || {})
-        .filter(([, d]) => Number(d.orders || 0) > 0)
-        .sort(([a], [b]) => a.localeCompare(b));
-      if (hours.length === 0) return `  ${day}: no recorded activity`;
-      const first = hours[0][0];
-      const last = hours[hours.length - 1][0];
-      const busiest = [...hours].sort(([, a], [, b]) => Number(b.orders || 0) - Number(a.orders || 0))[0];
-      return `  ${day}: active ${first}:00–${last}:59, busiest ${busiest[0]}:00 (${busiest[1].orders} orders, ₱${money(busiest[1].revenue)})`;
-    })
-    .join('\n');
+  // Compact multi-day activity map: operating hours + busiest window per day.
+  let activitySummary = '';
+  if (lim.activityDays > 0) {
+    const recentHourlyDays = Object.keys(hourly).sort((a, b) => b.localeCompare(a)).slice(0, lim.activityDays).reverse();
+    activitySummary = recentHourlyDays
+      .map((day) => {
+        const hours = Object.entries(hourly[day] || {})
+          .filter(([, d]) => Number(d.orders || 0) > 0)
+          .sort(([a], [b]) => a.localeCompare(b));
+        if (hours.length === 0) return `  ${day}: no recorded activity`;
+        const first = hours[0][0];
+        const last = hours[hours.length - 1][0];
+        const busiest = [...hours].sort(([, a], [, b]) => Number(b.orders || 0) - Number(a.orders || 0))[0];
+        return `  ${day}: active ${first}:00–${last}:59, busiest ${busiest[0]}:00 (${busiest[1].orders} orders, ₱${money(busiest[1].revenue)})`;
+      })
+      .join('\n');
+  }
 
-  // Weekday averages — weekly cycle evidence.
-  const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const byDow = Array.from({ length: 7 }, () => []);
-  Object.entries(daily).forEach(([key, d]) => {
-    const rev = Number(d.revenue || 0);
-    if (rev > 0) {
-      const date = new Date(`${key}T00:00:00`);
-      if (!Number.isNaN(date.getTime())) byDow[date.getDay()].push(rev);
-    }
-  });
-  const weekdaySummary = byDow
-    .map((list, i) => (list.length > 0
-      ? `  ${weekdayNames[i]}: avg ₱${money(list.reduce((s, v) => s + v, 0) / list.length)} over ${list.length} day(s)`
-      : null))
-    .filter(Boolean)
-    .join('\n');
+  // Weekday averages — weekly cycle evidence (skipped for compact tier).
+  let weekdaySummary = '';
+  if (tier !== 'compact') {
+    const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const byDow = Array.from({ length: 7 }, () => []);
+    Object.entries(daily).forEach(([key, d]) => {
+      const rev = Number(d.revenue || 0);
+      if (rev > 0) {
+        const date = new Date(`${key}T00:00:00`);
+        if (!Number.isNaN(date.getTime())) byDow[date.getDay()].push(rev);
+      }
+    });
+    weekdaySummary = byDow
+      .map((list, i) => (list.length > 0
+        ? `  ${weekdayNames[i]}: avg ₱${money(list.reduce((s, v) => s + v, 0) / list.length)} over ${list.length} day(s)`
+        : null))
+      .filter(Boolean)
+      .join('\n');
+  }
 
   const patternsSummary = (detectedPatterns || [])
     .map((p) => `  - [${p.tag}, confidence ${p.confidence}%] ${p.text}`)
     .join('\n');
 
-  const weeklySummary = Object.entries(weekly)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 8)
-    .map(([week, data]) => `  ${week}: ${data.orders || 0} orders, Revenue: ₱${money(data.revenue)}`)
-    .join('\n');
+  const weeklySummary = lim.weekly > 0
+    ? Object.entries(weekly)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, lim.weekly)
+      .map(([week, data]) => `  ${week}: ${data.orders || 0} orders, ₱${money(data.revenue)}`)
+      .join('\n')
+    : '';
 
-  const monthlySummary = Object.entries(monthly)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 6)
-    .map(([month, data]) => `  ${month}: ${data.orders || 0} orders, Revenue: ₱${money(data.revenue)}`)
-    .join('\n');
+  const monthlySummary = lim.monthly > 0
+    ? Object.entries(monthly)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, lim.monthly)
+      .map(([month, data]) => `  ${month}: ${data.orders || 0} orders, ₱${money(data.revenue)}`)
+      .join('\n')
+    : '';
 
-  const requestedMode = mode === 'executive'
-    ? 'executive business analysis presentation'
-    : mode === 'deep'
-    ? 'deep analysis report'
-    : mode === 'live'
-      ? 'AI live operations feed hourly update'
-      : mode === 'briefing'
-        ? 'AI shift handoff'
-        : mode === 'leak'
-          ? 'AI revenue leak detector'
-          : mode === 'simulation'
-            ? 'AI decision simulator'
-            : mode === 'opschat'
-              ? 'AI operations manager work chat'
-              : 'real-time quick insight';
+  const sections = [
+    `=== OVERALL SUMMARY ===
+Total Orders: ${summary.totalOrders || 0}
+Total Revenue: ₱${money(summary.totalRevenue)}
+Average Order Value: ₱${money(summary.averageOrderValue)}
+Best Selling Item: ${formatProductName(summary.bestSellingItem || 'N/A')}
+Least Selling Item: ${formatProductName(summary.leastSellingItem || 'N/A')}`,
+    `=== CURRENT PERIOD ===
+Today: ${todayAnalytics.orders || 0} orders, ₱${money(todayAnalytics.revenue)}
+This Week: ${weekAnalytics.orders || 0} orders, ₱${money(weekAnalytics.revenue)}
+This Month: ${monthAnalytics.orders || 0} orders, ₱${money(monthAnalytics.revenue)}
+Mean/Median Daily Orders: ${statistics.ordersPerDay?.mean || 0} / ${statistics.ordersPerDay?.median || 0}
+Mean/Median Daily Revenue: ₱${money(statistics.revenuePerDay?.mean)} / ₱${money(statistics.revenuePerDay?.median)}`,
+    `=== TOP PRODUCTS (of ${sortedProducts.length}) ===
+${productSummary || 'No product data available.'}`,
+    `=== ${inventoryHeading} ===
+${inventorySummary || inventoryFallback}`,
+    `=== DAILY TRENDS (last ${lim.daily} days) ===
+${dailySummary || 'No daily data available.'}`,
+    `=== HOURLY DISTRIBUTION ===
+${hourlySummary}`,
+  ];
 
-  return `Here is the complete analytics data from our restaurant self-ordering system.
+  if (activitySummary) sections.push(`=== DAILY ACTIVITY MAP ===\n${activitySummary}`);
+  if (weekdaySummary) sections.push(`=== WEEKDAY AVERAGES ===\n${weekdaySummary}`);
+  sections.push(`=== DETECTED OPERATIONAL PATTERNS (pre-computed, statistically verified) ===\n${patternsSummary || 'No strong patterns detected yet — more history needed.'}`);
+  if (weeklySummary) sections.push(`=== WEEKLY TRENDS ===\n${weeklySummary}`);
+  if (monthlySummary) sections.push(`=== MONTHLY TRENDS ===\n${monthlySummary}`);
 
-Requested analysis mode: ${requestedMode}
+  return `Analytics data from the restaurant self-ordering system.
+
 Report time: ${reportContext.asOfLabel || 'Current time'}
 Manager name: ${reportContext.managerNickname || 'Manager'}
 Branch: ${reportContext.branchLabel || 'Current branch'}
 Time of day label: ${reportContext.timeOfDayLabel || 'Current shift'}
 Manager question or scenario: ${reportContext.scenario || 'N/A'}
 
-=== OVERALL SUMMARY ===
-Total Orders: ${summary.totalOrders || 0}
-Total Revenue: ₱${money(summary.totalRevenue)}
-Average Order Value: ₱${money(summary.averageOrderValue)}
-Best Selling Item: ${formatProductName(summary.bestSellingItem || 'N/A')}
-Least Selling Item: ${formatProductName(summary.leastSellingItem || 'N/A')}
-Last Updated: ${summary.lastUpdated || 'N/A'}
+${sections.join('\n\n')}
 
-=== CURRENT PERIOD ===
-Today: ${todayAnalytics.orders || 0} orders, Revenue: ₱${money(todayAnalytics.revenue)}
-This Week: ${weekAnalytics.orders || 0} orders, Revenue: ₱${money(weekAnalytics.revenue)}
-This Month: ${monthAnalytics.orders || 0} orders, Revenue: ₱${money(monthAnalytics.revenue)}
-
-=== AVERAGES ===
-Mean Daily Orders: ${statistics.ordersPerDay?.mean || 0}
-Median Daily Orders: ${statistics.ordersPerDay?.median || 0}
-Mean Daily Revenue: ₱${money(statistics.revenuePerDay?.mean)}
-Median Daily Revenue: ₱${money(statistics.revenuePerDay?.median)}
-
-=== PRODUCTS (${productEntries.length} items) ===
-${productSummary || 'No product data available.'}
-
-=== INVENTORY (${Object.keys(inventory).length} items) ===
-${inventorySummary || 'No inventory data available.'}
-
-=== DAILY TRENDS (Last 14 days) ===
-${dailySummary || 'No daily data available.'}
-
-=== HOURLY DISTRIBUTION ===
-${hourlySummary}
-
-=== DAILY ACTIVITY MAP (Last 7 recorded days) ===
-${activitySummary || 'No hourly history available.'}
-
-=== WEEKDAY AVERAGES ===
-${weekdaySummary || 'Not enough history for weekday averages.'}
-
-=== DETECTED OPERATIONAL PATTERNS (pre-computed, statistically verified) ===
-${patternsSummary || 'No strong patterns detected yet — more history needed.'}
-
-=== WEEKLY TRENDS ===
-${weeklySummary || 'No weekly data available.'}
-
-=== MONTHLY TRENDS ===
-${monthlySummary || 'No monthly data available.'}
-
-Please provide operational interpretation, not a dashboard recap.`;
+Provide operational interpretation, not a dashboard recap.`;
 }
 
 export function parseModelJson(raw) {

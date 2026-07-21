@@ -13,10 +13,17 @@ import uvicorn
 
 from touchorders_core.api.app import create_app
 from touchorders_core.api.auth import FirebaseIdentityVerifier
-from touchorders_core.llm.budget import BudgetTracker
-from touchorders_core.llm.gateway import LLMGateway, OpenAIClient, default_daily_budgets
+from touchorders_core.domain.enums import AgentName
+from touchorders_core.llm.budget import BudgetTracker, DailyBudget
+from touchorders_core.llm.gateway import LLMGateway, OpenAIClient
 from touchorders_core.observability.logging import configure_logging, get_logger
 from touchorders_core.settings import Settings, get_settings
+
+# Global daily token fuse (per process), NOT a per-user limit — fairness is enforced by the
+# API's per-user daily request quota. This only caps catastrophic runaway (a bug or abuse storm)
+# at roughly $6 input + $5 output per day on gpt-4o-mini across ALL tenants. All BFF traffic
+# bills to the BUSINESS_ANALYST role. Sized for ~500 cafes at post-optimization usage.
+RUNAWAY_FUSE = {AgentName.BUSINESS_ANALYST: DailyBudget(input=40_000_000, output=8_000_000)}
 
 
 def build_app(settings: Settings | None = None):
@@ -42,7 +49,7 @@ def build_app(settings: Settings | None = None):
     gateway = None
     if openai_key:
         try:
-            gateway = LLMGateway({}, OpenAIClient(), budget=BudgetTracker(default_daily_budgets()))
+            gateway = LLMGateway({}, OpenAIClient(), budget=BudgetTracker(RUNAWAY_FUSE))
         except Exception as exc:  # noqa: BLE001 - degrade to AI-disabled rather than crash boot
             logger.warning("llm_gateway_unconfigured", error=str(exc))
     else:

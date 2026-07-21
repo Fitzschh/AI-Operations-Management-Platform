@@ -145,7 +145,9 @@ export default function AnalyticsPage() {
     setAiError('');
     setAiBusy('quick');
     try {
-      setQuickResult(await generateAIAnalysis(aiAnalyticsData, branchId, true, 'realtime'));
+      // Cache-first: shares the dashboard's realtime cache; the 3-minute cooldown still
+      // lets an explicit re-run refresh once the data has had time to move.
+      setQuickResult(await generateAIAnalysis(aiAnalyticsData, branchId, false, 'realtime'));
     } catch (e) { setAiError(e.message || 'Quick analysis failed.'); } finally { setAiBusy(''); }
   }
 

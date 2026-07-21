@@ -74,3 +74,17 @@ def test_returns_503_when_ai_backend_not_configured() -> None:
     with TestClient(app) as client:
         response = client.post("/api/ai/chat/completions?auth=test-id-token", json=_body())
     assert response.status_code == 503
+
+
+def test_per_user_daily_quota_returns_429(monkeypatch) -> None:
+    from touchorders_core.api.routes import ai as ai_routes
+
+    monkeypatch.setattr(ai_routes, "DAILY_REQUEST_LIMIT", 2)
+    ai_routes._daily_usage.clear()
+    app = create_app(_settings(), gateway=_gateway(), identity_verifier=FakeIdentityVerifier())
+    with TestClient(app) as client:
+        for _ in range(2):
+            assert client.post("/api/ai/chat/completions?auth=test-id-token", json=_body()).status_code == 200
+        response = client.post("/api/ai/chat/completions?auth=test-id-token", json=_body())
+    assert response.status_code == 429
+    ai_routes._daily_usage.clear()

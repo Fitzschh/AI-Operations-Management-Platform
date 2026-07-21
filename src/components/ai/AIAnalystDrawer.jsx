@@ -214,7 +214,10 @@ export default function AIAnalystDrawer({ open, onClose, initialAction = null })
     setUsageState(incrementUsage());
     try {
       const payload = { ...aiAnalyticsData, reportContext: reportContext(scenario ? { scenario } : {}) };
-      const result = await generateAIAnalysis(payload, branchId, true, mode);
+      // Question-specific modes (chat/simulation) are always fresh; the fixed one-click modes
+      // (live/briefing/leak) are cache-first — the service cooldown guards repeat clicks.
+      const forceFresh = mode === 'opschat' || mode === 'simulation';
+      const result = await generateAIAnalysis(payload, branchId, forceFresh, mode);
       const text = result.answer
         || result.summary
         || result.greeting

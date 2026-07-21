@@ -335,11 +335,3 @@ def _echo_violations(obj: Any, allowed: set[float], echo_keys: frozenset[str], k
             violations.extend(_echo_violations(item, allowed, echo_keys, key))
     return violations
 
-
-def default_daily_budgets() -> dict[AgentName, DailyBudget]:
-    """§17.4 default per-agent daily token budgets."""
-    return {
-        AgentName.OPERATIONS_MANAGER: DailyBudget(input=60000, output=15000),
-        AgentName.BUSINESS_ANALYST: DailyBudget(input=45000, output=12000),
-        AgentName.REALTIME_ANALYST: DailyBudget(input=25000, output=8000),
-    }

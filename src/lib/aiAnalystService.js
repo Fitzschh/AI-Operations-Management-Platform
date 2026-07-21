@@ -3,10 +3,49 @@ import { fetchWithAppCheck } from './firebase';
 import { buildSystemPrompt, buildDataPrompt, parseModelJson } from './aiPrompts';
 
 const CACHE_KEY_PREFIX = 'ai_analyst_cache_v2_';
-const CACHE_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * Per-mode cache policy (all times ms).
+ * - ttl: how long a cached response satisfies a normal (non-forced) load.
+ * - cooldown: minimum cache age before even a FORCED refresh regenerates. This turns
+ *   refresh-button spam into cache hits — restaurant data barely moves in a few minutes.
+ * - daily: the cache key embeds the local date → generated once per day, every later
+ *   login that day loads the cached brief (Daily Business Brief requirement).
+ * - noCache: question-specific modes are never cached (each request is unique).
+ */
+const MODE_CACHE_POLICY = {
+  realtime: { ttl: 30 * 60 * 1000, cooldown: 3 * 60 * 1000 },
+  live: { ttl: 55 * 60 * 1000, cooldown: 5 * 60 * 1000 },
+  deep: { ttl: 60 * 60 * 1000, cooldown: 10 * 60 * 1000 },
+  executive: { ttl: 60 * 60 * 1000, cooldown: 15 * 60 * 1000 },
+  briefing: { ttl: 24 * 60 * 60 * 1000, cooldown: 24 * 60 * 60 * 1000, daily: true },
+  leak: { ttl: 30 * 60 * 1000, cooldown: 10 * 60 * 1000 },
+  opschat: { noCache: true },
+  simulation: { noCache: true },
+};
+
+// Output-token caps per mode; long-form reports get room, quick insights stay tight.
+const MODE_MAX_TOKENS = {
+  deep: 2600,
+  executive: 2400,
+  briefing: 1000,
+  leak: 1200,
+  simulation: 900,
+  opschat: 1000,
+};
+
+function policyFor(mode) {
+  return MODE_CACHE_POLICY[mode] || MODE_CACHE_POLICY.realtime;
+}
+
+function localDateKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function getCacheKey(branchId, mode) {
-  return `${CACHE_KEY_PREFIX}${branchId}_${mode}`;
+  const daySuffix = policyFor(mode).daily ? `_${localDateKey()}` : '';
+  return `${CACHE_KEY_PREFIX}${branchId}_${mode}${daySuffix}`;
 }
 
 function normalizeAnalysisMode(mode) {
@@ -40,8 +79,8 @@ async function requestAnalysis(analyticsData, mode, branchId) {
         { role: 'user', content: dataPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: ['deep', 'executive', 'briefing', 'leak', 'simulation', 'opschat'].includes(mode) ? 2600 : 350,
-      temperature: ['deep', 'executive', 'briefing', 'leak', 'simulation', 'opschat'].includes(mode) ? 0.45 : 0.35,
+      max_tokens: MODE_MAX_TOKENS[mode] || 350,
+      temperature: MODE_MAX_TOKENS[mode] ? 0.45 : 0.35,
     }),
   });
 
@@ -67,33 +106,32 @@ async function requestAnalysis(analyticsData, mode, branchId) {
   return parseModelJson(rawContent);
 }
 
-function getCachedAnalysis(branchId, mode) {
+function readCache(branchId, mode) {
   try {
-    const key = getCacheKey(branchId, mode);
-    const cached = localStorage.getItem(key);
+    const cached = localStorage.getItem(getCacheKey(branchId, mode));
     if (!cached) return null;
-
     const parsed = JSON.parse(cached);
-    const age = Date.now() - (parsed.timestamp || 0);
-
-    if (age > CACHE_DURATION_MS) {
-      localStorage.removeItem(key);
-      return null;
-    }
-
-    return parsed.analysis;
+    return { analysis: parsed.analysis, age: Date.now() - (parsed.timestamp || 0) };
   } catch {
     return null;
   }
 }
 
 function cacheAnalysis(branchId, mode, analysis) {
+  const policy = policyFor(mode);
+  if (policy.noCache) return;
   try {
-    const key = getCacheKey(branchId, mode);
-    localStorage.setItem(key, JSON.stringify({
+    localStorage.setItem(getCacheKey(branchId, mode), JSON.stringify({
       timestamp: Date.now(),
       analysis,
     }));
+    if (policy.daily) {
+      // Purge previous days' date-keyed entries for this branch+mode.
+      const todayKey = getCacheKey(branchId, mode);
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith(`${CACHE_KEY_PREFIX}${branchId}_${mode}_`) && k !== todayKey)
+        .forEach((k) => localStorage.removeItem(k));
+    }
   } catch {
   }
 }
@@ -166,10 +204,16 @@ export async function generateAIAnalysis(analyticsData, branchId, forceRefresh =
   const analysisMode = normalizeAnalysisMode(mode);
   const safeAnalyticsData = sanitizeAnalyticsForAI(analyticsData);
 
-  if (!forceRefresh && branchId) {
-    const cached = getCachedAnalysis(branchId, analysisMode);
-    if (cached) {
-      return { ...cached, fromCache: true };
+  // Cache gate: normal loads honor the TTL; FORCED refreshes still honor the cooldown,
+  // so rapid re-clicks and re-opens are served from cache instead of re-billing OpenAI.
+  const policy = policyFor(analysisMode);
+  if (branchId && !policy.noCache) {
+    const hit = readCache(branchId, analysisMode);
+    if (hit) {
+      const maxAge = forceRefresh ? (policy.cooldown ?? 0) : (policy.ttl ?? 0);
+      if (hit.age < maxAge) {
+        return { ...hit.analysis, fromCache: true };
+      }
     }
   }
 

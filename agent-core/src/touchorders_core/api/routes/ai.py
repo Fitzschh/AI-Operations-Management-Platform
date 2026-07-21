@@ -8,6 +8,7 @@ budget, ledger), and the OpenAI-shaped response the dashboard already parses is 
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,6 +23,22 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 ALLOWED_MODELS = {"gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"}
 MAX_OUTPUT_TOKENS = 3000
+
+# Per-user daily request quota: deterministic fairness/abuse guard so one runaway client can
+# never drain the shared budget. Sized far above legitimate use (a busy cafe makes ~20-30 AI
+# calls/day after client-side caching). In-memory: resets at UTC midnight and on redeploy.
+DAILY_REQUEST_LIMIT = 300
+_daily_usage: dict[str, tuple[str, int]] = {}
+
+
+def _enforce_daily_quota(uid: str) -> None:
+    today = date.today().isoformat()
+    day, count = _daily_usage.get(uid, (today, 0))
+    if day != today:
+        count = 0
+    if count >= DAILY_REQUEST_LIMIT:
+        raise HTTPException(status_code=429, detail="Daily AI request limit reached; try again tomorrow")
+    _daily_usage[uid] = (today, count + 1)
 
 
 class ChatMessage(BaseModel):
@@ -68,6 +85,8 @@ async def chat_completions(
     identity: VerifiedIdentity = Depends(require_identity),
     gateway: LLMGateway = Depends(get_gateway),
 ) -> dict[str, Any]:
+    _enforce_daily_quota(identity.uid)
+
     system_prompt = next((m.content for m in body.messages if m.role == "system"), "")
     user_prompt = next((m.content for m in body.messages if m.role == "user"), "")
     if not user_prompt:

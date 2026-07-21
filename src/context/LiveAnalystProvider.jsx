@@ -154,6 +154,7 @@ export function LiveAnalystProvider({ children }) {
   const generatingRef = useRef(false);
   const handoffInFlightRef = useRef(false);
   const liveInFlightRef = useRef(false);
+  const lastLiveOrdersRef = useRef(null);
   const handoffStartedRef = useRef(false);
   const preparingVisibleUntilRef = useRef(0);
   const notificationTimerRef = useRef(null);
@@ -288,7 +289,9 @@ export function LiveAnalystProvider({ children }) {
 
     handoffInFlightRef.current = true;
     try {
-      const result = await handleGenerate('briefing', true, {
+      // forceRefresh=false: the briefing cache is date-keyed (one generation per day);
+      // every later login the same day loads the cached Daily Business Brief for free.
+      const result = await handleGenerate('briefing', false, {
         asOfLabel: 'AI Shift Handoff',
         branchLabel,
         managerNickname: nickname?.trim() || 'Manager',
@@ -312,21 +315,31 @@ export function LiveAnalystProvider({ children }) {
     const bd = branchDataRef.current;
     if (!activeBranch || !bd?.hasOrders || liveInFlightRef.current) return;
 
+    // Delta gate: if no new orders landed since the last live analysis, the situation has not
+    // changed — re-surface the existing analysis instead of paying for a new AI call.
+    const currentOrders = bd.aiAnalyticsData?.todayAnalytics?.orders ?? null;
+    if (currentOrders !== null && lastLiveOrdersRef.current === currentOrders) {
+      console.log('[LiveAnalyst] No new orders since last analysis — reusing cached insight');
+      if (state.feedItems.length > 0) showNotification();
+      return;
+    }
+
     liveInFlightRef.current = true;
     try {
       const now = new Date();
-      const result = await handleGenerate('live', true, {
+      const result = await handleGenerate('live', false, {
         asOfLabel: now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         scheduledHour: now.getHours(),
         generatedFor: now.toISOString(),
       });
       if (result) {
+        lastLiveOrdersRef.current = currentOrders;
         console.log('[LiveAnalyst] Live analysis generated');
       }
     } finally {
       liveInFlightRef.current = false;
     }
-  }, [activeBranch, handleGenerate]);
+  }, [activeBranch, handleGenerate, showNotification, state.feedItems.length]);
 
   // ── Trigger: Shift Handoff on login ──────────────────────────────
   useEffect(() => {
@@ -422,7 +435,8 @@ export function LiveAnalystProvider({ children }) {
       hourlyTimerRef.current = setTimeout(async () => {
         if (!mountedRef.current) return;
         console.log('[LiveAnalyst] Hourly cycle triggered');
-        clearAnalysisCache(activeBranch, 'live');
+        // No cache purge here: the 55-minute live TTL has expired by the hourly boundary, and
+        // the delta gate in generateLiveReport skips the call entirely when nothing changed.
         await generateLiveReport();
         if (mountedRef.current) {
           scheduleHourly();
