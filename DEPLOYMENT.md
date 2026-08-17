@@ -49,8 +49,8 @@ Service → **Variables**:
 | `OPENAI_API_KEY` | (Step 5) |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Paste the **entire contents** of the JSON file from Step 3 (one value, newlines fine) |
 
-Nothing else is required. (`TOUCHORDERS_ENVIRONMENT`, `TOUCHORDERS_CORS_ORIGINS`, `PORT` are
-automatic; see `agent-core/docs/deployment/railway-secrets.md` for optional overrides.)
+Nothing else is required. (`TOUCHORDERS_ENVIRONMENT`, `TOUCHORDERS_CORS_ORIGINS`, and `PORT`
+are automatic.)
 
 ## Step 5 — Generate the OpenAI API key
 
@@ -91,4 +91,5 @@ DevTools → Network that the AI call goes to your Railway origin (with the toke
 
 ---
 
-**Rotation & incident response:** `agent-core/docs/deployment/railway-secrets.md`.
+**Rotation & incident response:** replace the Railway secret, deploy, verify `/health` and
+`/health/ready`, then revoke the previous provider key.

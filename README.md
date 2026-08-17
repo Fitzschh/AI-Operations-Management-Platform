@@ -205,8 +205,7 @@ VITE_FIREBASE_APP_ID=...
 ```
 
 **Backend** (Railway Variables — secret; never in the repo). See
-[`agent-core/.env.example`](agent-core/.env.example) and
-[`agent-core/docs/deployment/railway-secrets.md`](agent-core/docs/deployment/railway-secrets.md):
+[`agent-core/.env.example`](agent-core/.env.example):
 
 ```
 OPENAI_API_KEY=sk-...                    # the only OpenAI key holder
@@ -269,92 +268,6 @@ Full step-by-step deployment: [`DEPLOYMENT.md`](DEPLOYMENT.md).
   the same authenticated seam.
 - **Multi-tenant access** — replace the pilot's UID allowlist with Firebase custom claims for
   scalable per-restaurant isolation.
-
----
-
-## How We Used GPT-5.6, Claude, and Codex
-
-This project was developed through a collaborative AI-assisted engineering workflow where each model
-contributed according to its strengths.
-
-### GPT-5.6 (Primary Development Partner)
-
-GPT-5.6 was the primary AI model used throughout the project's implementation and production
-development. It was heavily involved in the architectural redesign that transformed the project into
-its current production-ready structure.
-
-Major contributions include:
-
-- Designing and refining the frontend → FastAPI → OpenAI gateway architecture.
-- Refactoring the AI system from multiple disconnected implementations into a single authenticated AI service.
-- Designing the production AI workflow that powers:
-  - Executive Business Presentations
-  - Executive Written Reports
-  - Quick Insights
-  - Live Operations Analysis
-  - AI Analyst conversational interface
-- Creating and refining the structured prompting system used by every AI mode.
-- Improving the frontend architecture to separate deterministic analytics from AI-generated explanations.
-- Designing the recommendation explanation workflow ("Why?") where AI explains deterministic business insights without inventing data.
-- Planning and implementing conversation memory for the AI Analyst while minimizing token usage.
-- Reviewing overall project architecture, identifying technical debt, and recommending production-ready improvements before submission.
-- Assisting in preparing the project for deployment and hackathon submission.
-
-GPT-5.6 was used continuously throughout development as the primary engineering assistant for
-implementation decisions, production architecture, feature design, documentation, and technical
-validation.
-
-### Claude
-
-Claude was used alongside GPT-5.6 throughout development, primarily for high-level software
-architecture planning, long-form design discussions, code reviews, implementation audits, and system
-analysis.
-
-Major contributions include:
-
-- Reviewing architectural decisions before implementation.
-- Auditing completed features to verify they matched the intended design.
-- Identifying missing capabilities and implementation gaps.
-- Reviewing production readiness.
-- Suggesting simplifications and cleaner architectural patterns.
-- Assisting with technical documentation and repository organization.
-- Providing detailed implementation reports and feature verification.
-
-Rather than replacing GPT-5.6, Claude complemented it by acting as an architectural reviewer and
-planning assistant. Both GPT-5.6 and Claude were used extensively throughout production development,
-with each helping shape the final system from different perspectives.
-
-### OpenAI Codex
-
-Codex was primarily used as an implementation assistant for targeted engineering tasks rather than
-high-level architecture.
-
-Its primary responsibilities included:
-
-- Fixing bugs.
-- Resolving build errors.
-- Refactoring existing components.
-- Cleaning unused code.
-- Simplifying implementations.
-- Removing dead code.
-- Updating documentation.
-- Improving repository organization.
-- Assisting with smaller production fixes and maintenance tasks.
-
-Codex accelerated development by handling focused engineering work, allowing GPT-5.6 and Claude to
-focus on larger architectural and system-level decisions.
-
-### Overall Development Workflow
-
-Our workflow combined the strengths of multiple AI models throughout the project lifecycle.
-
-- **GPT-5.6** served as the primary engineering partner responsible for implementing major production features, designing the AI architecture, and guiding the overall technical direction.
-- **Claude** acted as an architectural planning and review partner, helping validate designs, identify implementation gaps, and improve overall system quality.
-- **Codex** was used for targeted engineering work such as debugging, refactoring, cleanup, and production fixes.
-
-This collaborative workflow enabled us to rapidly iterate on a production-ready AI-powered restaurant
-operations platform while maintaining a clean architecture, reusable AI services, and a scalable
-codebase suitable for continued development beyond the hackathon.
 
 ---
 
